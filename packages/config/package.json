@@ -1,0 +1,21 @@
+{
+  "name": "@template/config",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "tsconfig"
+  ],
+  "type": "module",
+  "exports": {
+    "./tsconfig/base": "./tsconfig/base.json",
+    "./tsconfig/app": "./tsconfig/app.json",
+    "./tsconfig/worker": "./tsconfig/worker.json"
+  },
+  "scripts": {
+    "check": "tsgo --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@typescript/native-preview": "catalog:"
+  }
+}

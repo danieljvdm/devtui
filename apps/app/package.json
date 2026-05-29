@@ -1,0 +1,24 @@
+{
+  "name": "app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
+    "check": "tsgo --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "effect": "catalog:",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@typescript/native-preview": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
