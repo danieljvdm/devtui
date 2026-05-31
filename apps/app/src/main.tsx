@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 
 import "./styles.css";
 
-const bootMessage = Effect.runSync(Effect.succeed("Vite+ Effect CF"));
+const bootMessage = Effect.runSync(Effect.succeed("Vite+ / Bun / Effect"));
 
 function App() {
   return (

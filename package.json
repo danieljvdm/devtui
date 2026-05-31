@@ -1,32 +1,55 @@
 {
-  "name": "vp-effect-cf-template",
+  "name": "devtui",
   "version": "0.0.0",
   "private": true,
+  "bin": {
+    "devtui": "src/index.tsx",
+    "devtui-broker": "src/mcp-broker.ts",
+    "devtui-mcp": "src/mcp.ts"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "type": "module",
+  "exports": {
+    ".": "./src/config.ts",
+    "./config": "./src/config.ts",
+    "./presets": "./src/presets.ts"
+  },
   "scripts": {
     "postinstall": "tsx scripts/postinstall.ts",
     "sync:effect": "tsx scripts/sync-effect-submodule.ts",
     "patch:tsgo": "tsx scripts/patch-tsgo.ts",
-    "check": "vp run -F './apps/*' -F './packages/*' check && tsgo --noEmit -p scripts/tsconfig.json",
-    "check:scripts": "tsgo --noEmit -p scripts/tsconfig.json",
-    "build": "vp run -F './apps/*' -F './packages/*' build",
-    "ready": "vp run -F './apps/*' -F './packages/*' check && tsgo --noEmit -p scripts/tsconfig.json && vp run -F './apps/*' -F './packages/*' build",
-    "dev": "vp run app#dev",
-    "dev:app": "vp run app#dev",
-    "dev:api": "vp run api#dev"
+    "dev": "bun run src/index.tsx",
+    "demo": "bun run src/index.tsx --demo",
+    "mcp": "bun run src/mcp.ts",
+    "mcp:broker": "bun run src/mcp-broker.ts",
+    "check": "tsc --noEmit && tsgo --noEmit -p scripts/tsconfig.json && bun run --cwd packages/config check && bun run --cwd apps/app check",
+    "check:tui": "tsc --noEmit",
+    "start": "bun run src/index.tsx",
+    "dev:app": "bun run --cwd apps/app dev",
+    "build:app": "bun run --cwd apps/app build"
+  },
+  "dependencies": {
+    "@effect/atom-react": "4.0.0-beta.49",
+    "@effect/platform-bun": "4.0.0-beta.74",
+    "@opentui/core": "^0.1.99",
+    "@opentui/react": "^0.1.99",
+    "effect": "catalog:",
+    "react": "^19.2.6",
+    "scheduler": "^0.27.0"
   },
   "devDependencies": {
+    "@effect/language-service": "^0.85.1",
     "@effect/platform-node": "catalog:",
     "@effect/tsgo": "catalog:",
-    "@types/bun": "catalog:",
+    "@types/bun": "^1.3.14",
     "@types/node": "catalog:",
+    "@types/react": "^19.2.15",
     "@typescript/native-preview": "catalog:",
-    "effect": "catalog:",
     "tsx": "catalog:",
+    "typescript": "^6.0.2",
     "vite-plus": "catalog:"
   },
   "overrides": {
@@ -34,19 +57,16 @@
     "vitest": "catalog:"
   },
   "engines": {
-    "node": ">=22.12.0"
+    "bun": ">=1.1.0"
   },
   "packageManager": "bun@1.3.9",
   "catalog": {
     "@effect/platform-node": "4.0.0-beta.74",
     "@effect/tsgo": "0.13.0",
-    "@types/bun": "1.3.14",
     "@types/node": "25.9.1",
     "@typescript/native-preview": "7.0.0-dev.20260527.2",
     "effect": "4.0.0-beta.74",
-    "effect-cf": "0.10.0",
     "tsx": "4.22.3",
-    "tsgo": "npm:@typescript/native-preview@7.0.0-dev.20260527.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.1.23",
     "vite-plus": "0.1.23",
     "vitest": "npm:@voidzero-dev/vite-plus-test@0.1.23"

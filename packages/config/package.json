@@ -1,5 +1,5 @@
 {
-  "name": "@template/config",
+  "name": "@devtui/config",
   "version": "0.0.0",
   "private": true,
   "files": [
@@ -8,8 +8,7 @@
   "type": "module",
   "exports": {
     "./tsconfig/base": "./tsconfig/base.json",
-    "./tsconfig/app": "./tsconfig/app.json",
-    "./tsconfig/worker": "./tsconfig/worker.json"
+    "./tsconfig/app": "./tsconfig/app.json"
   },
   "scripts": {
     "check": "tsgo --noEmit -p tsconfig.json"

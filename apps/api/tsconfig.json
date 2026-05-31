@@ -1,4 +1,0 @@
-{
-  "extends": "../../packages/config/tsconfig/worker.json",
-  "include": ["src/**/*.ts"]
-}
