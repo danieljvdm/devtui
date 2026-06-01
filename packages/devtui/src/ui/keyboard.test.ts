@@ -37,6 +37,7 @@ const state: UiState = {
   markedLogIds: [],
   visualAnchorId: null,
   visualAnchorLineIndex: 0,
+  helpOpen: false,
 };
 
 const context: KeyboardContext = {
@@ -281,5 +282,60 @@ describe("reduceKeyboard log selection", () => {
       ctx,
     );
     expect(result.command).toEqual({ _tag: "stopProcess", id: "api" });
+  });
+});
+
+describe("reduceKeyboard help and restart", () => {
+  test("? opens the help overlay and esc closes it", () => {
+    const opened = reduceKeyboard(key({ name: "?" }), state, processes, context);
+    expect(opened.state.helpOpen).toBe(true);
+    const closed = reduceKeyboard(key({ name: "escape" }), opened.state, processes, context);
+    expect(closed.state.helpOpen).toBe(false);
+  });
+
+  test("? also opens via shift+/ and toggles closed when already open", () => {
+    const opened = reduceKeyboard(key({ name: "/", shift: true }), state, processes, context);
+    expect(opened.state.helpOpen).toBe(true);
+    const toggled = reduceKeyboard(key({ name: "?" }), opened.state, processes, context);
+    expect(toggled.state.helpOpen).toBe(false);
+  });
+
+  test("the help overlay swallows navigation keys", () => {
+    const helpState = { ...state, helpOpen: true };
+    const result = reduceKeyboard(key({ name: "j" }), helpState, processes, rowsContext([1, 2, 3]));
+    expect(result.state).toEqual(helpState);
+    expect(result.command._tag).toBe("none");
+  });
+
+  test("shift+r restarts every process", () => {
+    const result = reduceKeyboard(
+      key({ name: "r", shift: true }),
+      { ...state, viewId: "api" },
+      processes,
+      context,
+    );
+    expect(result.command).toEqual({ _tag: "restartAll" });
+  });
+
+  test("r restarts only the focused process", () => {
+    const result = reduceKeyboard(
+      key({ name: "r" }),
+      { ...state, viewId: "api" },
+      processes,
+      context,
+    );
+    expect(result.command).toEqual({ _tag: "restartProcess", id: "api" });
+  });
+});
+
+describe("keyboardKeyFromInputSequence escape", () => {
+  test("recognizes a lone ESC so esc reliably reaches the reducer", () => {
+    const esc = keyboardKeyFromInputSequence("\x1b");
+    expect(esc).not.toBeNull();
+    expect(esc!.name).toBe("escape");
+  });
+
+  test("does not mistake an arrow sequence for escape", () => {
+    expect(keyboardKeyFromInputSequence("\x1b[D")!.name).toBe("left");
   });
 });

@@ -22,7 +22,8 @@ export type UiCommand =
   | { readonly _tag: "clearLogs" }
   | { readonly _tag: "copyText"; readonly text: string; readonly logIds: readonly number[] }
   | { readonly _tag: "stopProcess"; readonly id: string }
-  | { readonly _tag: "restartProcess"; readonly id: string };
+  | { readonly _tag: "restartProcess"; readonly id: string }
+  | { readonly _tag: "restartAll" };
 
 export interface KeyboardResult {
   readonly state: UiState;
@@ -54,6 +55,8 @@ const isNextView = (key: KeyboardKey) => key.name === "tab" || (key.ctrl && key.
 const isPreviousView = (key: KeyboardKey) => key.ctrl && key.name === "p";
 const isNextRow = (key: KeyboardKey) => key.name === "down" || key.name === "j";
 const isPreviousRow = (key: KeyboardKey) => key.name === "up" || key.name === "k";
+const isHelpToggle = (key: KeyboardKey) =>
+  key.name === "?" || (key.name === "/" && key.shift === true);
 const logLevels: readonly LogLevelFilter[] = ["all", "error", "warn", "info", "system"];
 const arrowCodes = {
   A: "up",
@@ -166,6 +169,13 @@ const paneKeyFromCtrlSequence = (sequence: string): PaneKey | null => {
 export const keyboardKeyFromInputSequence = (sequence: string): KeyboardKey | null => {
   const paneKey = paneKeyFromCtrlSequence(sequence);
   if (paneKey) return keyboardKey({ name: paneKey, raw: sequence, sequence, ctrl: true });
+
+  // A lone ESC arrives as its own coalesced sequence (the stdin parser flushes
+  // it on a short timeout), but the renderer doesn't always forward it to the
+  // React keyboard hook. Catch it here so esc reliably closes overlays/modes.
+  if (sequence === "\x1b" || sequence === "\x1b\x1b") {
+    return keyboardKey({ name: "escape", raw: sequence, sequence });
+  }
 
   if (sequence === "\b" || sequence === "\x7f") {
     return keyboardKey({ name: "backspace", raw: sequence, sequence });
@@ -485,6 +495,16 @@ export const reduceKeyboard = (
       : { state, command: noCommand };
   }
 
+  if (state.helpOpen) {
+    if (key.name === "q" || (key.ctrl && key.name === "c")) {
+      return { state: { ...state, helpOpen: false }, command: { _tag: "quit" } };
+    }
+    if (isEscape(key) || isHelpToggle(key)) {
+      return { state: { ...state, helpOpen: false }, command: noCommand };
+    }
+    return { state, command: noCommand };
+  }
+
   if (state.processPickerOpen) {
     if (key.name === "q" || (key.ctrl && key.name === "c")) {
       return { state, command: { _tag: "quit" } };
@@ -529,6 +549,10 @@ export const reduceKeyboard = (
 
   if (key.name === "p") {
     return { state: { ...state, processPickerOpen: true }, command: noCommand };
+  }
+
+  if (isHelpToggle(key)) {
+    return { state: { ...state, helpOpen: true }, command: noCommand };
   }
 
   const paneFocus = reducePaneFocus(key, state, context);
@@ -653,7 +677,11 @@ export const reduceKeyboard = (
       : { state, command: noCommand };
   }
 
-  if (key.name === "r" && state.viewId !== "merged") {
+  if (key.name === "r" && key.shift) {
+    return { state: resetLogScroll(state), command: { _tag: "restartAll" } };
+  }
+
+  if (key.name === "r" && !key.shift && state.viewId !== "merged") {
     return { state: resetLogScroll(state), command: { _tag: "restartProcess", id: state.viewId } };
   }
 

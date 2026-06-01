@@ -36,7 +36,7 @@ const build = (
     visualAnchorId: null,
     visualAnchorLineIndex: 0,
     focusedPane: "logs",
-    height: 7,
+    height: 8,
     logWidth: 31,
     nameColWidth: 8,
     ...overrides,
@@ -56,7 +56,7 @@ describe("buildViewModel log wrapping", () => {
 
   test("anchors scrolling to a visual row inside a wrapped log", () => {
     const view = build([log({ id: 1, text: "abcdefghijklmnop" })], {
-      height: 6,
+      height: 7,
       logAnchorId: 1,
       logAnchorLineIndex: 1,
     });

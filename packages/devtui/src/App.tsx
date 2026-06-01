@@ -1,4 +1,4 @@
-import { TextAttributes, type MouseEvent } from "@opentui/core";
+import { RGBA, TextAttributes, type MouseEvent } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { Effect } from "effect";
@@ -29,6 +29,7 @@ import {
   focusedPaneAtom,
   filterModeAtom,
   filterTextAtom,
+  helpOpenAtom,
   logAnchorIdAtom,
   logAnchorLineIndexAtom,
   logLevelAtom,
@@ -57,9 +58,18 @@ const statusColor = (status: ProcessRuntime["status"]) => {
     case "stopped":
       return colors.violet;
     case "exited":
-      return colors.muted;
+      return colors.red;
   }
 };
+
+// A non-zero exit reads as a crash, so surface the code inline (`exited(1)`).
+const statusLabel = (process: ProcessRuntime) =>
+  process.status === "exited" && process.exitCode !== null
+    ? `exited(${process.exitCode})`
+    : process.status;
+
+const isCrashed = (process: ProcessRuntime | undefined): process is ProcessRuntime =>
+  process !== undefined && (process.status === "exited" || process.status === "failed");
 
 const logColor = (log: LogEntry) => {
   switch (log.severity) {
@@ -157,7 +167,7 @@ const hintSpans = (hints: readonly Hint[]) =>
     <span key={`gap-${index}`} fg={colors.separator}>
       {index === 0 ? "" : "   "}
     </span>,
-    <span key={`key-${index}`} fg={colors.accent} attributes={TextAttributes.BOLD}>
+    <span key={`key-${index}`} fg={colors.green} attributes={TextAttributes.BOLD}>
       {key}
     </span>,
     <span key={`label-${index}`} fg={colors.muted}>
@@ -166,10 +176,16 @@ const hintSpans = (hints: readonly Hint[]) =>
     </span>,
   ]);
 
-const Divider = ({ width }: { readonly width: number }) => (
+const Divider = ({
+  width,
+  solid = false,
+}: {
+  readonly width: number;
+  readonly solid?: boolean;
+}) => (
   <box height={1}>
     <text fg={colors.separator} wrapMode="none" truncate>
-      {"-".repeat(Math.max(1, width))}
+      {(solid ? "─" : "╌").repeat(Math.max(1, width))}
     </text>
   </box>
 );
@@ -178,7 +194,7 @@ const SeparatorColumn = ({ height }: { readonly height: number }) => (
   <box width={1} height={height}>
     {Array.from({ length: Math.max(0, height) }, (_, index) => (
       <text key={index} fg={colors.separator} wrapMode="none">
-        |
+        │
       </text>
     ))}
   </box>
@@ -240,9 +256,9 @@ const ProcessMetrics = ({
           {"  "}
         </span>
       )}
-      <span fg={detail}>{process.lineCount}</span>
+      <span fg={colors.dim}>{process.lineCount}</span>
       <span fg={colors.dim}>{compact ? "l " : " lines  "}</span>
-      <span fg={process.errorCount > 0 ? colors.red : detail}>{process.errorCount}</span>
+      <span fg={process.errorCount > 0 ? colors.yellow : colors.dim}>{process.errorCount}</span>
       <span fg={colors.dim}>{compact ? "e" : " err"}</span>
       {endpoint ? (
         <span fg={selected ? colors.selectedText : colors.accent}>
@@ -250,12 +266,6 @@ const ProcessMetrics = ({
           {endpoint}
         </span>
       ) : null}
-      {process.exitCode === null ? null : (
-        <span fg={colors.red}>
-          {"  exit "}
-          {process.exitCode}
-        </span>
-      )}
     </>
   );
 };
@@ -276,7 +286,9 @@ const ProcessList = ({
   const compact = width < 48;
   const indexWidth = Math.max(1, String(processes.length).length);
   const nameWidth = compact ? Math.max(6, Math.min(12, width - 24)) : 14;
-  const statusWidth = 8;
+  const statusWidth = processes.reduce((max, process) => {
+    return Math.max(max, statusLabel(process).length);
+  }, 8);
   const mergedSelected = viewId === "merged";
   return (
     <box flexDirection="column" width={width}>
@@ -319,7 +331,7 @@ const ProcessList = ({
                 {pad(process.spec.name, nameWidth)}{" "}
               </span>
               <span fg={statusColor(process.status)} attributes={TextAttributes.BOLD}>
-                {pad(process.status, statusWidth)}{" "}
+                {pad(statusLabel(process), statusWidth)}{" "}
               </span>
               <ProcessMetrics process={process} compact={compact} selected={selected} />
             </text>
@@ -353,15 +365,30 @@ const FilterLine = ({
   readonly width: number;
 }) => {
   if (!filterMode) return null;
-  const hint = filterText
-    ? " enter apply  esc clear"
-    : " type to filter logs  enter apply  esc clear";
+  const hint = filterText ? "enter apply · esc cancel" : "type to filter logs · esc cancel";
+  const query = truncate(filterText, Math.max(1, width - hint.length - 8));
   return (
-    <box height={1} paddingLeft={1} paddingRight={1}>
-      <text wrapMode="none" truncate fg={colors.accent}>
-        /{truncate(filterText, Math.max(1, width - hint.length - 5))}
-        <span fg={colors.accent}>_</span>
-        <span fg={colors.muted}>{hint}</span>
+    <box
+      height={1}
+      flexDirection="row"
+      paddingLeft={1}
+      paddingRight={1}
+      backgroundColor={rgba(colors.selectedBg)}
+    >
+      <box flexDirection="row">
+        <text wrapMode="none">
+          <span fg={colors.accent} attributes={TextAttributes.BOLD}>
+            {"/ "}
+          </span>
+          <span fg={colors.text}>{query}</span>
+          <span fg={colors.text} attributes={TextAttributes.INVERSE}>
+            {" "}
+          </span>
+        </text>
+      </box>
+      <box flexGrow={1} />
+      <text wrapMode="none">
+        <span fg={colors.dim}>{hint}</span>
       </text>
     </box>
   );
@@ -574,6 +601,91 @@ const ProcessPicker = ({
   );
 };
 
+// Keybinding reference shown by the `?` overlay. Kept in sync with the reducer
+// in ui/keyboard.ts so the help never advertises shortcuts that don't exist.
+const HELP_KEYS: readonly (readonly [string, string])[] = [
+  ["j / k", "move selection down / up"],
+  ["h / l", "focus processes / logs"],
+  ["1-9", "jump to process by number"],
+  ["m", "merged view"],
+  ["tab", "cycle process views"],
+  ["/", "filter logs"],
+  ["L", "cycle level: all → out → err"],
+  ["x", "mark row (logs) · stop process"],
+  ["V", "visual select range"],
+  ["c / y", "copy selection"],
+  ["C", "clear log buffer"],
+  ["r / R", "restart process / restart all"],
+  ["?", "toggle this help"],
+  ["q", "quit (press twice to confirm)"],
+];
+
+const HelpOverlay = ({
+  width,
+  height,
+  processCount,
+}: {
+  readonly width: number;
+  readonly height: number;
+  readonly processCount: number;
+}) => {
+  const keyColumn = HELP_KEYS.reduce((max, [key]) => Math.max(max, key.length), 0);
+  return (
+    <box
+      position="absolute"
+      top={0}
+      left={0}
+      width={width}
+      height={height}
+      backgroundColor={RGBA.fromValues(0, 0, 0, 0.45)}
+      justifyContent="center"
+      alignItems="center"
+    >
+      <box
+        border
+        borderStyle="rounded"
+        borderColor={colors.separator}
+        backgroundColor={rgba(colors.panelBg)}
+        flexDirection="column"
+        paddingTop={1}
+        paddingBottom={1}
+        paddingLeft={2}
+        paddingRight={2}
+      >
+        <box height={1}>
+          <text wrapMode="none">
+            <span fg={colors.accent} attributes={TextAttributes.BOLD}>
+              devtui · keys
+            </span>
+          </text>
+        </box>
+        <box height={1} />
+        {HELP_KEYS.map(([key, description]) => (
+          <box key={key} height={1}>
+            <text wrapMode="none">
+              <span fg={colors.green} attributes={TextAttributes.BOLD}>
+                {pad(key, keyColumn)}
+              </span>
+              <span fg={colors.muted}>
+                {"   "}
+                {description}
+              </span>
+            </text>
+          </box>
+        ))}
+        <box height={1} />
+        <box height={1}>
+          <text wrapMode="none">
+            <span fg={colors.dim}>
+              {processCount} {processCount === 1 ? "process" : "processes"} · ? or esc to close
+            </span>
+          </text>
+        </box>
+      </box>
+    </box>
+  );
+};
+
 const runCommand = (runner: ProcessRunner, clipboard: ClipboardRuntime, command: UiCommand) => {
   switch (command._tag) {
     case "none":
@@ -589,6 +701,9 @@ const runCommand = (runner: ProcessRunner, clipboard: ClipboardRuntime, command:
       return;
     case "stopProcess":
       Effect.runFork(runner.stopProcess(command.id));
+      return;
+    case "restartAll":
+      // Handled in applyKeyboard where the live process list is available.
       return;
     case "quit":
       Effect.runFork(runner.stopAll);
@@ -622,6 +737,7 @@ export const App = ({
   const [markedLogIds, setMarkedLogIds] = useAtom(markedLogIdsAtom);
   const [visualAnchorId, setVisualAnchorId] = useAtom(visualAnchorIdAtom);
   const [visualAnchorLineIndex, setVisualAnchorLineIndex] = useAtom(visualAnchorLineIndexAtom);
+  const [helpOpen, setHelpOpen] = useAtom(helpOpenAtom);
   const [copyFlash, setCopyFlash] = useState<CopyFlash | null>(null);
   const copyFlashTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const flashCopiedRows = (logIds: readonly number[]) => {
@@ -673,6 +789,7 @@ export const App = ({
     markedLogIds,
     visualAnchorId,
     visualAnchorLineIndex,
+    helpOpen,
   };
   const view = buildViewModel({
     snapshot,
@@ -711,6 +828,7 @@ export const App = ({
     setMarkedLogIds(nextState.markedLogIds);
     setVisualAnchorId(nextState.visualAnchorId);
     setVisualAnchorLineIndex(nextState.visualAnchorLineIndex);
+    setHelpOpen(nextState.helpOpen);
   };
 
   const applyKeyboard = (key: KeyboardKey) => {
@@ -745,6 +863,13 @@ export const App = ({
     if (quitArmedRef.current) setQuitArm(false);
 
     if (result.command._tag === "copyText") flashCopiedRows(result.command.logIds);
+
+    if (result.command._tag === "restartAll") {
+      current.snapshot.processes.forEach((process) =>
+        Effect.runFork(runner.restartProcess(process.id)),
+      );
+      return;
+    }
 
     runCommand(runner, clipboard, result.command);
   };
@@ -788,8 +913,17 @@ export const App = ({
     applyUiState(nextState);
   };
 
-  const footerHints: readonly Hint[] =
-    view.selectionCount > 0
+  const activeProcess = snapshot.processes.find((process) => process.id === viewId);
+  const crashed = isCrashed(activeProcess);
+
+  const footerHints: readonly Hint[] = crashed
+    ? [
+        ["r", "restart"],
+        ["R", "restart all"],
+        ["?", "help"],
+        ["q", "quit"],
+      ]
+    : view.selectionCount > 0
       ? [
           ["y", "copy"],
           ["x", "mark"],
@@ -801,12 +935,12 @@ export const App = ({
             ["x", "mark"],
             ["V", "visual"],
             ["c", "copy"],
-            ["q", "quit"],
+            ["?", "help"],
           ]
         : [
             ["c", "copy"],
             ["C", "clear"],
-            ["h/l", "focus"],
+            ["?", "help"],
             ["q", "quit"],
           ];
 
@@ -826,7 +960,7 @@ export const App = ({
       />
       <Divider width={width} />
       {showSideRail ? (
-        <box flexDirection="row" height={Math.max(1, height - 4)}>
+        <box flexDirection="row" height={view.logPaneHeight}>
           <ProcessList
             processes={snapshot.processes}
             viewId={viewId}
@@ -834,13 +968,8 @@ export const App = ({
             width={processRailWidth}
             showHelp={false}
           />
-          <SeparatorColumn height={Math.max(1, height - 4)} />
+          <SeparatorColumn height={view.logPaneHeight} />
           <box flexDirection="column" width={Math.max(1, width - processRailWidth - 1)}>
-            <FilterLine
-              filterMode={filterMode}
-              filterText={filterText}
-              width={Math.max(1, width - processRailWidth - 1)}
-            />
             {processPickerOpen ? (
               <ProcessPicker
                 processes={snapshot.processes}
@@ -879,7 +1008,6 @@ export const App = ({
               <Divider width={width} />
             </>
           ) : null}
-          <FilterLine filterMode={filterMode} filterText={filterText} width={width} />
           {processPickerOpen ? (
             <ProcessPicker
               processes={snapshot.processes}
@@ -904,20 +1032,27 @@ export const App = ({
           )}
         </>
       )}
+      <FilterLine filterMode={filterMode} filterText={filterText} width={width} />
+      <Divider width={width} solid />
       <box height={1} paddingLeft={1} paddingRight={1}>
         <text wrapMode="none" truncate>
-          <span fg={view.focusedPane === "logs" ? colors.accent : colors.muted}>
-            {view.focusedPane}
-          </span>
+          <span fg={colors.dim}>{view.focusedPane}</span>
           <span fg={colors.separator}>{"  "}</span>
-          <span fg={view.isFollowing ? colors.green : colors.yellow}>
+          <span fg={view.isFollowing ? colors.green : colors.muted}>
             {view.isFollowing
               ? "following"
               : `paused ${view.scrollStartIndex + 1}-${view.scrollEndIndex}/${view.displayRowCount}`}
           </span>
           <span fg={colors.separator}>{"  "}</span>
-          <span fg={colors.muted}>{view.activeLabel}</span>
-          {view.selectionCount > 0 ? (
+          <span fg={colors.text}>{view.activeLabel}</span>
+          {crashed && activeProcess ? (
+            <>
+              <span fg={colors.separator}>{"  "}</span>
+              <span fg={colors.red} attributes={TextAttributes.BOLD}>
+                {statusLabel(activeProcess)}
+              </span>
+            </>
+          ) : view.selectionCount > 0 ? (
             <>
               <span fg={colors.separator}>{"  "}</span>
               <span fg={colors.accent} attributes={TextAttributes.BOLD}>
@@ -942,6 +1077,9 @@ export const App = ({
           )}
         </text>
       </box>
+      {helpOpen ? (
+        <HelpOverlay width={width} height={height} processCount={snapshot.processes.length} />
+      ) : null}
     </box>
   );
 };

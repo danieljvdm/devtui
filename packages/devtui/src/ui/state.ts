@@ -19,6 +19,7 @@ export interface UiState {
   readonly markedLogIds: readonly number[];
   readonly visualAnchorId: number | null;
   readonly visualAnchorLineIndex: number;
+  readonly helpOpen: boolean;
 }
 
 export const viewIdAtom = Atom.make<ViewId>("merged").pipe(Atom.keepAlive);
@@ -34,3 +35,4 @@ export const selectedLogLineIndexAtom = Atom.make(0).pipe(Atom.keepAlive);
 export const markedLogIdsAtom = Atom.make<readonly number[]>([]).pipe(Atom.keepAlive);
 export const visualAnchorIdAtom = Atom.make<number | null>(null).pipe(Atom.keepAlive);
 export const visualAnchorLineIndexAtom = Atom.make(0).pipe(Atom.keepAlive);
+export const helpOpenAtom = Atom.make(false).pipe(Atom.keepAlive);

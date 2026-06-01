@@ -202,7 +202,9 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
     ? Math.min(input.height - 5, input.snapshot.processes.length + 2)
     : 0;
   const filterHeight = input.filterMode ? 1 : 0;
-  const fixedChromeHeight = input.sideRail || !input.showProcessList ? 4 : 5;
+  // Header (2) + header rule (1) + status rule (1) + status bar (1) = 5, plus a
+  // second rule (1) under the top process list when it is shown.
+  const fixedChromeHeight = input.sideRail || !input.showProcessList ? 5 : 6;
   const logPaneHeight = Math.max(
     1,
     input.height - processPaneHeight - filterHeight - fixedChromeHeight,
