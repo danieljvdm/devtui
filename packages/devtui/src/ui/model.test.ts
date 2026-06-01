@@ -32,9 +32,13 @@ const build = (
     logAnchorLineIndex: 0,
     selectedLogId: null,
     selectedLogLineIndex: 0,
+    markedLogIds: [],
+    visualAnchorId: null,
+    visualAnchorLineIndex: 0,
     focusedPane: "logs",
     height: 7,
     logWidth: 31,
+    nameColWidth: 8,
     ...overrides,
   });
 

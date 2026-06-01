@@ -34,6 +34,9 @@ const state: UiState = {
   logAnchorLineIndex: 0,
   selectedLogId: null,
   selectedLogLineIndex: 0,
+  markedLogIds: [],
+  visualAnchorId: null,
+  visualAnchorLineIndex: 0,
 };
 
 const context: KeyboardContext = {
@@ -159,5 +162,124 @@ describe("reduceKeyboard pane focus", () => {
       reduceKeyboard(kittyCtrlL!, { ...state, focusedPane: "processes" }, processes, context).state
         .focusedPane,
     ).toBe("logs");
+  });
+});
+
+const makeLog = (id: number) => ({
+  id,
+  processId: "api",
+  processName: "api",
+  stream: "stdout" as const,
+  severity: "info" as const,
+  text: `line ${id}`,
+  timestampMs: id,
+});
+
+const rowsContext = (ids: readonly number[], overrides: Partial<KeyboardContext> = {}) => {
+  const visibleRows = ids.map((id) => ({ log: makeLog(id), lineIndex: 0 }));
+  return {
+    canFocusProcesses: true,
+    selectedLog: null,
+    ...overrides,
+    scroll: {
+      visibleRows,
+      startIndex: 0,
+      maxStartIndex: Math.max(0, ids.length - 1),
+      paneHeight: 10,
+      ...overrides.scroll,
+    },
+  } satisfies KeyboardContext;
+};
+
+describe("reduceKeyboard log selection", () => {
+  test("x marks the cursor entry and advances to the next entry", () => {
+    const ctx = rowsContext([1, 2, 3]);
+    const result = reduceKeyboard(
+      key({ name: "x" }),
+      { ...state, selectedLogId: 1, selectedLogLineIndex: 0 },
+      processes,
+      ctx,
+    );
+    expect(result.state.markedLogIds).toEqual([1]);
+    expect(result.state.selectedLogId).toBe(2);
+    expect(result.command._tag).toBe("none");
+  });
+
+  test("x toggles a mark off when pressed on an already-marked entry", () => {
+    const ctx = rowsContext([1, 2, 3]);
+    const result = reduceKeyboard(
+      key({ name: "x" }),
+      { ...state, markedLogIds: [1], selectedLogId: 1, selectedLogLineIndex: 0 },
+      processes,
+      ctx,
+    );
+    expect(result.state.markedLogIds).toEqual([]);
+  });
+
+  test("c copies every marked entry in row order and clears the selection", () => {
+    const ctx = rowsContext([1, 2, 3]);
+    const result = reduceKeyboard(
+      key({ name: "c" }),
+      { ...state, markedLogIds: [3, 1] },
+      processes,
+      ctx,
+    );
+    expect(result.command).toMatchObject({ _tag: "copyText", logIds: [1, 3] });
+    if (result.command._tag === "copyText") {
+      expect(result.command.text.split("\n")).toHaveLength(2);
+    }
+    expect(result.state.markedLogIds).toEqual([]);
+  });
+
+  test("y yanks the inclusive visual range between anchor and cursor", () => {
+    const ctx = rowsContext([1, 2, 3, 4]);
+    const result = reduceKeyboard(
+      key({ name: "y" }),
+      {
+        ...state,
+        visualAnchorId: 2,
+        visualAnchorLineIndex: 0,
+        selectedLogId: 4,
+        selectedLogLineIndex: 0,
+      },
+      processes,
+      ctx,
+    );
+    expect(result.command).toMatchObject({ _tag: "copyText", logIds: [2, 3, 4] });
+    expect(result.state.visualAnchorId).toBeNull();
+  });
+
+  test("V enters visual mode anchored on the cursor entry", () => {
+    const ctx = rowsContext([1, 2, 3]);
+    const result = reduceKeyboard(
+      key({ name: "v", shift: true }),
+      { ...state, selectedLogId: 2, selectedLogLineIndex: 0 },
+      processes,
+      ctx,
+    );
+    expect(result.state.visualAnchorId).toBe(2);
+  });
+
+  test("escape clears an active selection before any other escape behaviour", () => {
+    const ctx = rowsContext([1, 2, 3]);
+    const result = reduceKeyboard(
+      key({ name: "escape" }),
+      { ...state, viewId: "api", markedLogIds: [1] },
+      processes,
+      ctx,
+    );
+    expect(result.state.markedLogIds).toEqual([]);
+    expect(result.state.viewId).toBe("api");
+  });
+
+  test("x stops the focused process instead of marking when the process pane is focused", () => {
+    const ctx = rowsContext([1, 2, 3]);
+    const result = reduceKeyboard(
+      key({ name: "x" }),
+      { ...state, focusedPane: "processes", viewId: "api" },
+      processes,
+      ctx,
+    );
+    expect(result.command).toEqual({ _tag: "stopProcess", id: "api" });
   });
 });

@@ -14,6 +14,8 @@ export const colors = {
   selectedBg: "#263244",
   selectedText: "#FFFFFF",
   separator: "#2B3443",
+  copyFlashBg: "#1C3A2A",
+  copyFlashBgDim: "#172B22",
 };
 
 export const rgba = (hex: string) => RGBA.fromHex(hex);

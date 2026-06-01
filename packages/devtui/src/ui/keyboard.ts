@@ -1,5 +1,6 @@
 import type { LogEntry, ProcessRuntime } from "../core/domain.ts";
 import { extractPrintable } from "../core/text.ts";
+import { resolveSelectedLogIds } from "./model.ts";
 import type { LogLevelFilter, UiState, ViewId } from "./state.ts";
 
 export interface KeyboardKey {
@@ -19,7 +20,7 @@ export type UiCommand =
   | { readonly _tag: "none" }
   | { readonly _tag: "quit" }
   | { readonly _tag: "clearLogs" }
-  | { readonly _tag: "copyText"; readonly text: string }
+  | { readonly _tag: "copyText"; readonly text: string; readonly logIds: readonly number[] }
   | { readonly _tag: "stopProcess"; readonly id: string }
   | { readonly _tag: "restartProcess"; readonly id: string };
 
@@ -253,6 +254,84 @@ const resetLogScroll = (state: UiState): UiState => ({
 const formatCopiedLog = (log: LogEntry) =>
   `${new Date(log.timestampMs).toISOString()} ${log.processName} ${log.stream} ${log.severity} ${log.text}`;
 
+const clearSelection = (state: UiState): UiState => ({
+  ...state,
+  markedLogIds: [],
+  visualAnchorId: null,
+  visualAnchorLineIndex: 0,
+});
+
+const hasSelection = (state: UiState) =>
+  state.markedLogIds.length > 0 || state.visualAnchorId !== null;
+
+const toggleMark = (markedLogIds: readonly number[], id: number): readonly number[] =>
+  markedLogIds.includes(id)
+    ? markedLogIds.filter((marked) => marked !== id)
+    : [...markedLogIds, id];
+
+const cursorIndex = (scroll: ScrollContext, state: UiState): number =>
+  state.selectedLogId === null
+    ? scroll.visibleRows.length - 1
+    : scroll.visibleRows.findIndex(
+        (row) => row.log.id === state.selectedLogId && row.lineIndex === state.selectedLogLineIndex,
+      );
+
+// Rows from the same wrapped entry are contiguous, so the next entry starts just
+// past the last row that shares the cursor's id. Returns how many rows down that
+// is (0 when the cursor is already on the final entry).
+const rowsToNextEntry = (scroll: ScrollContext, fromIndex: number): number => {
+  const rows = scroll.visibleRows;
+  if (fromIndex < 0 || fromIndex >= rows.length) return 0;
+  const currentId = rows[fromIndex]?.log.id;
+  let index = fromIndex + 1;
+  while (index < rows.length && rows[index]?.log.id === currentId) index += 1;
+  return index >= rows.length ? 0 : index - fromIndex;
+};
+
+const copyCommand = (state: UiState, context: KeyboardContext): KeyboardResult => {
+  const scroll = context.scroll;
+  const selectedIds = resolveSelectedLogIds(
+    scroll.visibleRows,
+    state.markedLogIds,
+    state.visualAnchorId === null
+      ? null
+      : { id: state.visualAnchorId, lineIndex: state.visualAnchorLineIndex },
+    { id: state.selectedLogId, lineIndex: state.selectedLogLineIndex },
+  );
+
+  if (selectedIds.size > 0) {
+    const seen = new Set<number>();
+    const logs: LogEntry[] = [];
+    for (const row of scroll.visibleRows) {
+      if (selectedIds.has(row.log.id) && !seen.has(row.log.id)) {
+        seen.add(row.log.id);
+        logs.push(row.log);
+      }
+    }
+    return logs.length > 0
+      ? {
+          state: clearSelection(state),
+          command: {
+            _tag: "copyText",
+            text: logs.map(formatCopiedLog).join("\n"),
+            logIds: logs.map((log) => log.id),
+          },
+        }
+      : { state, command: noCommand };
+  }
+
+  return context.selectedLog
+    ? {
+        state,
+        command: {
+          _tag: "copyText",
+          text: formatCopiedLog(context.selectedLog),
+          logIds: [context.selectedLog.id],
+        },
+      }
+    : { state, command: noCommand };
+};
+
 const focusPane = (
   state: UiState,
   canFocusProcesses: boolean,
@@ -460,6 +539,9 @@ export const reduceKeyboard = (
   }
 
   if (isEscape(key)) {
+    if (hasSelection(state)) {
+      return { state: clearSelection(state), command: noCommand };
+    }
     return {
       state:
         state.filterText || state.logLevel !== "all"
@@ -491,10 +573,43 @@ export const reduceKeyboard = (
       };
     }
 
-    if (key.name === "c" && !key.shift) {
-      return context.selectedLog
-        ? { state, command: { _tag: "copyText", text: formatCopiedLog(context.selectedLog) } }
-        : { state, command: noCommand };
+    if ((key.name === "c" && !key.shift) || (key.name === "y" && !key.shift)) {
+      return copyCommand(state, context);
+    }
+
+    if (key.name === "x" && !key.shift) {
+      const index = cursorIndex(scroll, state);
+      const id = scroll.visibleRows[index]?.log.id;
+      if (id === undefined) return { state, command: noCommand };
+      const marked = { ...state, markedLogIds: toggleMark(state.markedLogIds, id) };
+      const delta = rowsToNextEntry(scroll, index);
+      return {
+        state: delta > 0 ? reduceLogCursor(marked, scroll, delta) : marked,
+        command: noCommand,
+      };
+    }
+
+    if (key.name === "v" && key.shift) {
+      if (state.visualAnchorId !== null) {
+        return {
+          state: { ...state, visualAnchorId: null, visualAnchorLineIndex: 0 },
+          command: noCommand,
+        };
+      }
+      const index = cursorIndex(scroll, state);
+      const row = scroll.visibleRows[index];
+      if (!row) return { state, command: noCommand };
+      return {
+        state: {
+          ...state,
+          focusedPane: "logs",
+          visualAnchorId: row.log.id,
+          visualAnchorLineIndex: row.lineIndex,
+          selectedLogId: row.log.id,
+          selectedLogLineIndex: row.lineIndex,
+        },
+        command: noCommand,
+      };
     }
   }
 
@@ -542,7 +657,12 @@ export const reduceKeyboard = (
     return { state: resetLogScroll(state), command: { _tag: "restartProcess", id: state.viewId } };
   }
 
-  if (key.name === "x" && state.viewId !== "merged") {
+  if (
+    key.name === "x" &&
+    state.focusedPane === "processes" &&
+    context.canFocusProcesses &&
+    state.viewId !== "merged"
+  ) {
     return { state, command: { _tag: "stopProcess", id: state.viewId } };
   }
 

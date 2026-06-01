@@ -23,7 +23,57 @@ export interface ViewModelInput {
   readonly focusedPane: FocusedPane;
   readonly height: number;
   readonly logWidth: number;
+  readonly nameColWidth: number;
+  readonly markedLogIds: readonly number[];
+  readonly visualAnchorId: number | null;
+  readonly visualAnchorLineIndex: number;
 }
+
+export interface SelectionCursor {
+  readonly id: number | null;
+  readonly lineIndex: number;
+}
+
+export interface VisualAnchor {
+  readonly id: number;
+  readonly lineIndex: number;
+}
+
+/**
+ * The set of log-entry ids that count as "selected" right now: every explicitly
+ * marked entry, plus — when visual mode is active — every entry whose row falls
+ * between the visual anchor and the cursor (inclusive). Shared by the keyboard
+ * reducer (to gather copy text) and the view model (to highlight rows) so both
+ * always agree.
+ */
+export const resolveSelectedLogIds = (
+  rows: readonly { readonly log: { readonly id: number }; readonly lineIndex: number }[],
+  markedLogIds: readonly number[],
+  visualAnchor: VisualAnchor | null,
+  cursor: SelectionCursor,
+): ReadonlySet<number> => {
+  const ids = new Set(markedLogIds);
+  if (visualAnchor === null) return ids;
+
+  const anchorIndex = rows.findIndex(
+    (row) => row.log.id === visualAnchor.id && row.lineIndex === visualAnchor.lineIndex,
+  );
+  if (anchorIndex < 0) return ids;
+
+  const cursorIndex =
+    cursor.id === null
+      ? rows.length - 1
+      : rows.findIndex((row) => row.log.id === cursor.id && row.lineIndex === cursor.lineIndex);
+  if (cursorIndex < 0) return ids;
+
+  const low = Math.min(anchorIndex, cursorIndex);
+  const high = Math.max(anchorIndex, cursorIndex);
+  for (let index = low; index <= high; index++) {
+    const row = rows[index];
+    if (row) ids.add(row.log.id);
+  }
+  return ids;
+};
 
 export interface ViewModel {
   readonly activeLabel: string;
@@ -39,6 +89,9 @@ export interface ViewModel {
   readonly focusedPane: FocusedPane;
   readonly canFocusProcesses: boolean;
   readonly selectedLog: LogEntry | null;
+  readonly selectedLogIds: ReadonlySet<number>;
+  readonly selectionCount: number;
+  readonly visualMode: boolean;
   readonly displayRowCount: number;
   readonly scrollbar: ScrollbarModel | null;
 }
@@ -89,7 +142,17 @@ const indexForAnchor = (
   return maxStartIndex;
 };
 
-const prefixLength = "00:00:00 ".length + 10 + " err ".length;
+export const LOG_TIME_WIDTH = "00:00:00".length;
+export const LOG_STREAM_WIDTH = 3;
+export const LOG_DIVIDER = " │ ";
+
+/**
+ * Width of the metadata gutter that precedes a log message:
+ * `HH:MM:SS <name> lvl │ `. Kept in one place so the renderer and the
+ * wrap calculation never drift apart.
+ */
+export const logMetaWidth = (nameColWidth: number) =>
+  LOG_TIME_WIDTH + 1 + nameColWidth + 1 + LOG_STREAM_WIDTH + LOG_DIVIDER.length;
 
 const wrapText = (text: string, width: number) => {
   if (width <= 0) return [""];
@@ -103,8 +166,9 @@ const wrapText = (text: string, width: number) => {
 const buildDisplayRows = (
   logs: readonly LogEntry[],
   logPaneWidth: number,
+  nameColWidth: number,
 ): readonly LogDisplayRow[] => {
-  const textWidth = Math.max(1, logPaneWidth - prefixLength - 2);
+  const textWidth = Math.max(1, logPaneWidth - logMetaWidth(nameColWidth) - 2);
   return logs.flatMap((log) => {
     const textRows = wrapText(log.text, textWidth);
     return textRows.map((text, lineIndex) => ({
@@ -151,10 +215,10 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
     input.filterText,
     input.logLevel,
   );
-  const unconstrainedRows = buildDisplayRows(visibleLogs, input.logWidth);
+  const unconstrainedRows = buildDisplayRows(visibleLogs, input.logWidth, input.nameColWidth);
   const hasScrollbar = unconstrainedRows.length > logPaneHeight;
   const displayRows = hasScrollbar
-    ? buildDisplayRows(visibleLogs, Math.max(1, input.logWidth - 1))
+    ? buildDisplayRows(visibleLogs, Math.max(1, input.logWidth - 1), input.nameColWidth)
     : unconstrainedRows;
   const maxScrollStartIndex = Math.max(0, displayRows.length - logPaneHeight);
   const scrollStartIndex =
@@ -180,6 +244,15 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
         visibleLogs.find((log) => log.id === input.selectedLogId) ??
         null);
 
+  const selectedLogIds = resolveSelectedLogIds(
+    displayRows,
+    input.markedLogIds,
+    input.visualAnchorId === null
+      ? null
+      : { id: input.visualAnchorId, lineIndex: input.visualAnchorLineIndex },
+    { id: input.selectedLogId, lineIndex: input.selectedLogLineIndex },
+  );
+
   return {
     activeLabel: activeLabel(input.snapshot.processes, input.viewId),
     visibleLogs,
@@ -194,6 +267,9 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
     focusedPane,
     canFocusProcesses,
     selectedLog,
+    selectedLogIds,
+    selectionCount: selectedLogIds.size,
+    visualMode: input.visualAnchorId !== null,
     displayRowCount: displayRows.length,
     scrollbar: buildScrollbar(
       displayRows.length,

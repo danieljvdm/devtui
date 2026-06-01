@@ -3,7 +3,7 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { Effect } from "effect";
 import * as Atom from "effect/unstable/reactivity/Atom";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardRuntime } from "./core/clipboard.ts";
 import type { ProcessRunner } from "./core/runner.ts";
 import type { DevtuiConfig, LogEntry, ProcessRuntime, RunnerSnapshot } from "./core/domain.ts";
@@ -16,7 +16,15 @@ import {
   type KeyboardKey,
   type UiCommand,
 } from "./ui/keyboard.ts";
-import { buildViewModel, type LogDisplayRow, type ScrollbarModel } from "./ui/model.ts";
+import {
+  buildViewModel,
+  logMetaWidth,
+  LOG_DIVIDER,
+  LOG_STREAM_WIDTH,
+  LOG_TIME_WIDTH,
+  type LogDisplayRow,
+  type ScrollbarModel,
+} from "./ui/model.ts";
 import {
   focusedPaneAtom,
   filterModeAtom,
@@ -24,9 +32,12 @@ import {
   logAnchorIdAtom,
   logAnchorLineIndexAtom,
   logLevelAtom,
+  markedLogIdsAtom,
   processPickerOpenAtom,
   selectedLogIdAtom,
   selectedLogLineIndexAtom,
+  visualAnchorIdAtom,
+  visualAnchorLineIndexAtom,
   type LogLevelFilter,
   type UiState,
   viewIdAtom,
@@ -66,10 +77,94 @@ const logColor = (log: LogEntry) => {
 const logStreamLabel = (log: LogEntry) =>
   log.stream === "stderr" ? "err" : log.stream === "system" ? "sys" : "out";
 
-const logPrefix = (log: LogEntry) =>
-  `${formatTime(log.timestampMs)} ${pad(log.processName, 10)} ${logStreamLabel(log)} `;
+const streamColor = (log: LogEntry) =>
+  log.stream === "stderr" ? colors.red : log.stream === "system" ? colors.violet : colors.muted;
 
-const continuationPrefix = () => `${" ".repeat("00:00:00".length)} ${" ".repeat(10)}   | `;
+const nameColumnWidth = (processes: readonly ProcessRuntime[]) => {
+  const longest = processes.reduce((max, process) => Math.max(max, process.spec.name.length), 0);
+  return clamp(longest, 3, 12);
+};
+
+// The dim metadata gutter (`HH:MM:SS  name  lvl │`) shown to the left of every
+// log message. Continuation rows blank the metadata but keep the divider so
+// wrapped text stays visually attached to its entry.
+type DividerStyle = "normal" | "selected" | "copied";
+
+// The 3-column divider between metadata and message doubles as a status glyph,
+// all the same width as " │ " so nothing reflows: a green check on a just-copied
+// entry, an accent bar on a selected/marked one, otherwise the dim separator.
+const DividerGlyph = ({ style }: { readonly style: DividerStyle }) => {
+  if (style === "copied")
+    return (
+      <span fg={colors.green} attributes={TextAttributes.BOLD}>
+        {" ✓ "}
+      </span>
+    );
+  if (style === "selected")
+    return (
+      <span fg={colors.accent} attributes={TextAttributes.BOLD}>
+        {" ┃ "}
+      </span>
+    );
+  return <span fg={colors.separator}>{LOG_DIVIDER}</span>;
+};
+
+const LogMeta = ({
+  log,
+  nameWidth,
+  continuation,
+  dividerStyle,
+}: {
+  readonly log: LogEntry;
+  readonly nameWidth: number;
+  readonly continuation: boolean;
+  readonly dividerStyle: DividerStyle;
+}) => {
+  if (continuation) {
+    const blank = " ".repeat(LOG_TIME_WIDTH + 1 + nameWidth + 1 + LOG_STREAM_WIDTH);
+    // The check only marks the first row of an entry; wrapped rows fall back to
+    // the plain divider (or the selected bar when the entry is selected).
+    return (
+      <>
+        <span fg={colors.separator}>{blank}</span>
+        <DividerGlyph style={dividerStyle === "copied" ? "normal" : dividerStyle} />
+      </>
+    );
+  }
+  return (
+    <>
+      <span fg={colors.dim}>{formatTime(log.timestampMs)} </span>
+      <span fg={colors.muted}>{pad(log.processName, nameWidth)} </span>
+      <span fg={streamColor(log)}>{logStreamLabel(log)}</span>
+      <DividerGlyph style={dividerStyle} />
+    </>
+  );
+};
+
+// Transient highlight shown on the log rows right after their text is copied.
+// `stage` steps from a brighter green to a dimmer one so the flash fades out.
+interface CopyFlash {
+  readonly ids: ReadonlySet<number>;
+  readonly stage: 0 | 1;
+}
+
+type Hint = readonly [key: string, label: string];
+
+// Renders `<key> label` pairs with the key highlighted and groups separated by
+// breathing room, so the footer hints read as discrete shortcuts.
+const hintSpans = (hints: readonly Hint[]) =>
+  hints.flatMap(([key, label], index) => [
+    <span key={`gap-${index}`} fg={colors.separator}>
+      {index === 0 ? "" : "   "}
+    </span>,
+    <span key={`key-${index}`} fg={colors.accent} attributes={TextAttributes.BOLD}>
+      {key}
+    </span>,
+    <span key={`label-${index}`} fg={colors.muted}>
+      {" "}
+      {label}
+    </span>,
+  ]);
 
 const Divider = ({ width }: { readonly width: number }) => (
   <box height={1}>
@@ -122,6 +217,49 @@ const Header = ({
   );
 };
 
+const ProcessMetrics = ({
+  process,
+  compact,
+  selected,
+}: {
+  readonly process: ProcessRuntime;
+  readonly compact: boolean;
+  readonly selected: boolean;
+}) => {
+  const detail = selected ? colors.selectedText : colors.muted;
+  const endpoint = compact
+    ? process.endpoints[0]?.port
+      ? `:${process.endpoints[0].port}`
+      : ""
+    : (process.endpoints[0]?.url ?? "");
+  return (
+    <>
+      {compact ? null : (
+        <span fg={detail}>
+          pid {process.pid ?? "-"}
+          {"  "}
+        </span>
+      )}
+      <span fg={detail}>{process.lineCount}</span>
+      <span fg={colors.dim}>{compact ? "l " : " lines  "}</span>
+      <span fg={process.errorCount > 0 ? colors.red : detail}>{process.errorCount}</span>
+      <span fg={colors.dim}>{compact ? "e" : " err"}</span>
+      {endpoint ? (
+        <span fg={selected ? colors.selectedText : colors.accent}>
+          {"  "}
+          {endpoint}
+        </span>
+      ) : null}
+      {process.exitCode === null ? null : (
+        <span fg={colors.red}>
+          {"  exit "}
+          {process.exitCode}
+        </span>
+      )}
+    </>
+  );
+};
+
 const ProcessList = ({
   processes,
   viewId,
@@ -134,59 +272,76 @@ const ProcessList = ({
   readonly focused: boolean;
   readonly width: number;
   readonly showHelp: boolean;
-}) => (
-  <box flexDirection="column" width={width}>
-    <box height={1} paddingLeft={1} paddingRight={1}>
-      <text wrapMode="none" truncate>
-        <span
-          fg={viewId === "merged" ? colors.selectedText : focused ? colors.accent : colors.muted}
-          attributes={TextAttributes.BOLD}
-        >
-          {viewId === "merged" ? "> " : "  "}merged
-        </span>
-        <span fg={colors.dim}>{"  all process logs"}</span>
-      </text>
-    </box>
-    {processes.map((process, index) => {
-      const selected = viewId === process.id;
-      const exit = process.exitCode === null ? "" : ` exit=${process.exitCode}`;
-      const compact = width < 48;
-      const nameWidth = compact ? Math.max(6, Math.min(12, width - 24)) : 14;
-      const prefix = `${selected ? ">" : " "} ${index + 1} ${pad(process.spec.name, nameWidth)} `;
-      const suffix = compact
-        ? ` ${process.lineCount}l ${process.errorCount}e${process.endpoints[0]?.port ? ` :${process.endpoints[0].port}` : ""}${exit}`
-        : ` pid=${process.pid ?? "-"} lines=${process.lineCount} errors=${process.errorCount}${
-            process.endpoints[0]?.url ? ` ${process.endpoints[0].url}` : ""
-          }${exit}`;
-      return (
-        <box
-          key={process.id}
-          height={1}
-          paddingLeft={1}
-          paddingRight={1}
-          backgroundColor={selected ? rgba(colors.selectedBg) : undefined}
-        >
-          <text wrapMode="none" truncate>
-            <span fg={selected ? colors.selectedText : colors.text}>{prefix}</span>
-            <span fg={statusColor(process.status)} attributes={TextAttributes.BOLD}>
-              {pad(process.status, 9)}
-            </span>
-            <span fg={selected ? colors.selectedText : colors.text}>
-              {truncate(suffix, Math.max(1, width - prefix.length - 11))}
-            </span>
-          </text>
-        </box>
-      );
-    })}
-    {showHelp ? (
-      <box height={1} paddingLeft={1} paddingRight={1}>
-        <text fg={colors.dim} wrapMode="none" truncate>
-          h/l or arrows focus j/k select p picker / text L level
+}) => {
+  const compact = width < 48;
+  const indexWidth = Math.max(1, String(processes.length).length);
+  const nameWidth = compact ? Math.max(6, Math.min(12, width - 24)) : 14;
+  const statusWidth = 8;
+  const mergedSelected = viewId === "merged";
+  return (
+    <box flexDirection="column" width={width}>
+      <box
+        height={1}
+        paddingLeft={1}
+        paddingRight={1}
+        backgroundColor={mergedSelected ? rgba(colors.selectedBg) : undefined}
+      >
+        <text wrapMode="none" truncate>
+          <span fg={mergedSelected ? colors.selectedText : focused ? colors.accent : colors.muted}>
+            {mergedSelected ? "> " : "  "}
+            {" ".repeat(indexWidth + 1)}
+          </span>
+          <span
+            fg={mergedSelected ? colors.selectedText : colors.text}
+            attributes={TextAttributes.BOLD}
+          >
+            {pad("merged", nameWidth)}
+          </span>
+          <span fg={colors.dim}>{" all process logs"}</span>
         </text>
       </box>
-    ) : null}
-  </box>
-);
+      {processes.map((process, index) => {
+        const selected = viewId === process.id;
+        return (
+          <box
+            key={process.id}
+            height={1}
+            paddingLeft={1}
+            paddingRight={1}
+            backgroundColor={selected ? rgba(colors.selectedBg) : undefined}
+          >
+            <text wrapMode="none" truncate>
+              <span fg={selected ? colors.selectedText : colors.muted}>
+                {selected ? "> " : "  "}
+                {pad(String(index + 1), indexWidth)}{" "}
+              </span>
+              <span fg={selected ? colors.selectedText : colors.text}>
+                {pad(process.spec.name, nameWidth)}{" "}
+              </span>
+              <span fg={statusColor(process.status)} attributes={TextAttributes.BOLD}>
+                {pad(process.status, statusWidth)}{" "}
+              </span>
+              <ProcessMetrics process={process} compact={compact} selected={selected} />
+            </text>
+          </box>
+        );
+      })}
+      {showHelp ? (
+        <box height={1} paddingLeft={1} paddingRight={1}>
+          <text wrapMode="none" truncate>
+            {hintSpans([
+              ["h/l", "focus"],
+              ["j/k", "select"],
+              ["p", "picker"],
+              ["/", "filter"],
+              ["L", "level"],
+            ])}
+          </text>
+        </box>
+      ) : null}
+    </box>
+  );
+};
 
 const FilterLine = ({
   filterMode,
@@ -218,8 +373,11 @@ const LogRows = ({
   height,
   scrollbar,
   focused,
+  nameWidth,
   selectedLogId,
   selectedLogLineIndex,
+  selectedLogIds,
+  copyFlash,
   onScroll,
 }: {
   readonly rows: readonly LogDisplayRow[];
@@ -227,8 +385,11 @@ const LogRows = ({
   readonly height: number;
   readonly scrollbar: ScrollbarModel | null;
   readonly focused: boolean;
+  readonly nameWidth: number;
   readonly selectedLogId: number | null;
   readonly selectedLogLineIndex: number;
+  readonly selectedLogIds: ReadonlySet<number>;
+  readonly copyFlash: CopyFlash | null;
   readonly onScroll: (event: MouseEvent) => void;
 }) => {
   const visibleRows = rows.slice(0, Math.max(0, height));
@@ -267,12 +428,23 @@ const LogRows = ({
         }
 
         const log = row.log;
-        const prefix = row.lineIndex === 0 ? logPrefix(log) : continuationPrefix();
-        const textWidth = Math.max(1, logPaneWidth - prefix.length - 2);
-        const selected =
+        const continuation = row.lineIndex !== 0;
+        const textWidth = Math.max(1, logPaneWidth - logMetaWidth(nameWidth) - 2);
+        const cursor =
           focused &&
           ((selectedLogId === log.id && selectedLogLineIndex === row.lineIndex) ||
             (selectedLogId === null && index === visibleRows.length - 1));
+        const flashStage = copyFlash && copyFlash.ids.has(log.id) ? copyFlash.stage : null;
+        const flashed = flashStage !== null;
+        const inSelection = selectedLogIds.has(log.id);
+        const highlighted = cursor || inSelection;
+        const background =
+          flashStage !== null
+            ? rgba(flashStage === 0 ? colors.copyFlashBg : colors.copyFlashBgDim)
+            : highlighted
+              ? rgba(colors.selectedBg)
+              : undefined;
+        const dividerStyle: DividerStyle = flashed ? "copied" : inSelection ? "selected" : "normal";
         const segments = log.ansiText
           ? (parseAnsiWrappedLines(log.ansiText, textWidth)[row.lineIndex] ?? [{ text: row.text }])
           : [{ text: row.text }];
@@ -282,7 +454,7 @@ const LogRows = ({
             height={1}
             flexDirection="row"
             width={width}
-            backgroundColor={selected ? rgba(colors.selectedBg) : undefined}
+            backgroundColor={background}
             onMouseScroll={onScroll}
           >
             <box
@@ -292,12 +464,19 @@ const LogRows = ({
               paddingRight={hasScrollbar ? 0 : 1}
             >
               <text wrapMode="none" truncate>
-                <span fg={colors.dim}>{prefix}</span>
+                <LogMeta
+                  log={log}
+                  nameWidth={nameWidth}
+                  continuation={continuation}
+                  dividerStyle={dividerStyle}
+                />
                 {segments.map((segment, segmentIndex) => (
                   <span
                     key={segmentIndex}
                     fg={
-                      selected ? (segment.fg ?? colors.selectedText) : (segment.fg ?? logColor(log))
+                      highlighted
+                        ? (segment.fg ?? colors.selectedText)
+                        : (segment.fg ?? logColor(log))
                     }
                     attributes={segment.attributes}
                   >
@@ -354,7 +533,11 @@ const ProcessPicker = ({
           <span fg={colors.accent} attributes={TextAttributes.BOLD}>
             processes
           </span>
-          <span fg={colors.muted}> j/k select enter close</span>
+          <span fg={colors.separator}>{"   "}</span>
+          {hintSpans([
+            ["j/k", "select"],
+            ["enter", "close"],
+          ])}
         </text>
       </box>
       <Divider width={pickerWidth} />
@@ -379,8 +562,12 @@ const ProcessPicker = ({
         );
       })}
       <box height={1} paddingLeft={1} paddingRight={1}>
-        <text fg={colors.dim} wrapMode="none" truncate>
-          m merged 1-9 jump esc close
+        <text wrapMode="none" truncate>
+          {hintSpans([
+            ["m", "merged"],
+            ["1-9", "jump"],
+            ["esc", "close"],
+          ])}
         </text>
       </box>
     </box>
@@ -432,10 +619,45 @@ export const App = ({
   const [logAnchorLineIndex, setLogAnchorLineIndex] = useAtom(logAnchorLineIndexAtom);
   const [selectedLogId, setSelectedLogId] = useAtom(selectedLogIdAtom);
   const [selectedLogLineIndex, setSelectedLogLineIndex] = useAtom(selectedLogLineIndexAtom);
+  const [markedLogIds, setMarkedLogIds] = useAtom(markedLogIdsAtom);
+  const [visualAnchorId, setVisualAnchorId] = useAtom(visualAnchorIdAtom);
+  const [visualAnchorLineIndex, setVisualAnchorLineIndex] = useAtom(visualAnchorLineIndexAtom);
+  const [copyFlash, setCopyFlash] = useState<CopyFlash | null>(null);
+  const copyFlashTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const flashCopiedRows = (logIds: readonly number[]) => {
+    const ids = new Set(logIds);
+    copyFlashTimers.current.forEach(clearTimeout);
+    copyFlashTimers.current = [
+      setTimeout(() => setCopyFlash({ ids, stage: 1 }), 550),
+      setTimeout(() => setCopyFlash(null), 950),
+    ];
+    setCopyFlash({ ids, stage: 0 });
+  };
+  useEffect(() => () => copyFlashTimers.current.forEach(clearTimeout), []);
+  // Quitting is guarded by a confirm step: the first quit press arms a window,
+  // a second one within it actually quits, and any other key (or the timeout)
+  // disarms. The ref mirrors the state so the captured input handler sees the
+  // latest value without being re-registered.
+  const [quitArmed, setQuitArmed] = useState(false);
+  const quitArmedRef = useRef(false);
+  const quitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setQuitArm = (armed: boolean) => {
+    quitArmedRef.current = armed;
+    setQuitArmed(armed);
+    if (quitTimer.current) clearTimeout(quitTimer.current);
+    quitTimer.current = armed ? setTimeout(() => setQuitArm(false), 3000) : null;
+  };
+  useEffect(
+    () => () => {
+      if (quitTimer.current !== null) clearTimeout(quitTimer.current);
+    },
+    [],
+  );
   const showSideRail = width >= 110 && height >= 18;
   const showTopProcesses = !showSideRail && width >= 72 && height >= 22;
   const processRailWidth = showSideRail ? clamp(Math.floor(width * 0.28), 28, 42) : width;
   const logPaneWidth = showSideRail ? Math.max(1, width - processRailWidth - 1) : width;
+  const nameColWidth = nameColumnWidth(snapshot.processes);
 
   const state: UiState = {
     viewId,
@@ -448,6 +670,9 @@ export const App = ({
     logAnchorLineIndex,
     selectedLogId,
     selectedLogLineIndex,
+    markedLogIds,
+    visualAnchorId,
+    visualAnchorLineIndex,
   };
   const view = buildViewModel({
     snapshot,
@@ -464,6 +689,10 @@ export const App = ({
     focusedPane,
     height,
     logWidth: logPaneWidth,
+    nameColWidth,
+    markedLogIds,
+    visualAnchorId,
+    visualAnchorLineIndex,
   });
   const stateRef = useRef({ state, snapshot, view });
   stateRef.current = { state, snapshot, view };
@@ -479,6 +708,9 @@ export const App = ({
     setLogAnchorLineIndex(nextState.logAnchorLineIndex);
     setSelectedLogId(nextState.selectedLogId);
     setSelectedLogLineIndex(nextState.selectedLogLineIndex);
+    setMarkedLogIds(nextState.markedLogIds);
+    setVisualAnchorId(nextState.visualAnchorId);
+    setVisualAnchorLineIndex(nextState.visualAnchorLineIndex);
   };
 
   const applyKeyboard = (key: KeyboardKey) => {
@@ -497,10 +729,22 @@ export const App = ({
     applyUiState(result.state);
 
     if (result.command._tag === "quit") {
-      runCommand(runner, clipboard, result.command);
-      renderer.destroy();
+      // Ctrl+C is the deliberate hard-quit and bypasses the guard; a bare `q`
+      // arms the confirm step instead.
+      const forceQuit = key.ctrl && key.name === "c";
+      if (forceQuit || quitArmedRef.current) {
+        setQuitArm(false);
+        runCommand(runner, clipboard, result.command);
+        renderer.destroy();
+        return;
+      }
+      setQuitArm(true);
       return;
     }
+
+    if (quitArmedRef.current) setQuitArm(false);
+
+    if (result.command._tag === "copyText") flashCopiedRows(result.command.logIds);
 
     runCommand(runner, clipboard, result.command);
   };
@@ -543,6 +787,28 @@ export const App = ({
     );
     applyUiState(nextState);
   };
+
+  const footerHints: readonly Hint[] =
+    view.selectionCount > 0
+      ? [
+          ["y", "copy"],
+          ["x", "mark"],
+          ["esc", "clear"],
+          ["q", "quit"],
+        ]
+      : view.focusedPane === "logs"
+        ? [
+            ["x", "mark"],
+            ["V", "visual"],
+            ["c", "copy"],
+            ["q", "quit"],
+          ]
+        : [
+            ["c", "copy"],
+            ["C", "clear"],
+            ["h/l", "focus"],
+            ["q", "quit"],
+          ];
 
   return (
     <box
@@ -589,8 +855,11 @@ export const App = ({
                 height={view.logPaneHeight}
                 scrollbar={view.scrollbar}
                 focused={view.focusedPane === "logs"}
+                nameWidth={nameColWidth}
                 selectedLogId={selectedLogId}
                 selectedLogLineIndex={selectedLogLineIndex}
+                selectedLogIds={view.selectedLogIds}
+                copyFlash={copyFlash}
                 onScroll={onLogScroll}
               />
             )}
@@ -625,20 +894,52 @@ export const App = ({
               height={view.logPaneHeight}
               scrollbar={view.scrollbar}
               focused={view.focusedPane === "logs"}
+              nameWidth={nameColWidth}
               selectedLogId={selectedLogId}
               selectedLogLineIndex={selectedLogLineIndex}
+              selectedLogIds={view.selectedLogIds}
+              copyFlash={copyFlash}
               onScroll={onLogScroll}
             />
           )}
         </>
       )}
       <box height={1} paddingLeft={1} paddingRight={1}>
-        <text wrapMode="none" truncate fg={colors.muted}>
-          {view.focusedPane}{" "}
-          {view.isFollowing
-            ? "following"
-            : `paused ${view.scrollStartIndex + 1}-${view.scrollEndIndex}/${view.displayRowCount}`}{" "}
-          {view.activeLabel} level {logLevel} c copy C clear h/l arrows focus q quit
+        <text wrapMode="none" truncate>
+          <span fg={view.focusedPane === "logs" ? colors.accent : colors.muted}>
+            {view.focusedPane}
+          </span>
+          <span fg={colors.separator}>{"  "}</span>
+          <span fg={view.isFollowing ? colors.green : colors.yellow}>
+            {view.isFollowing
+              ? "following"
+              : `paused ${view.scrollStartIndex + 1}-${view.scrollEndIndex}/${view.displayRowCount}`}
+          </span>
+          <span fg={colors.separator}>{"  "}</span>
+          <span fg={colors.muted}>{view.activeLabel}</span>
+          {view.selectionCount > 0 ? (
+            <>
+              <span fg={colors.separator}>{"  "}</span>
+              <span fg={colors.accent} attributes={TextAttributes.BOLD}>
+                {view.visualMode ? "visual " : ""}
+                {view.selectionCount} selected
+              </span>
+            </>
+          ) : (
+            <>
+              <span fg={colors.separator}>{"  "}</span>
+              <span fg={colors.dim}>level </span>
+              <span fg={colors.muted}>{logLevel}</span>
+            </>
+          )}
+          <span fg={colors.separator}>{"     "}</span>
+          {quitArmed ? (
+            <span fg={colors.yellow} attributes={TextAttributes.BOLD}>
+              press q again to quit
+            </span>
+          ) : (
+            hintSpans(footerHints)
+          )}
         </text>
       </box>
     </box>
