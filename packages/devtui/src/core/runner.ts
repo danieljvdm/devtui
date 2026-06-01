@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Fiber, Ref, Scope, Stream, SubscriptionRef } from "effect";
+import { Cause, Clock, Deferred, Effect, Fiber, Ref, Scope, Stream, SubscriptionRef } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner";
 import type { BunServices } from "@effect/platform-bun/BunServices";
@@ -102,6 +102,44 @@ const markNotRunning = (
     return next;
   });
 
+const processKillOptions = {
+  killSignal: "SIGTERM",
+  forceKillAfter: "2 seconds",
+} as const;
+
+const currentPid = () =>
+  "process" in globalThis &&
+  typeof process === "object" &&
+  process !== null &&
+  typeof process.pid === "number"
+    ? process.pid
+    : null;
+
+const superviseShellCommand = (command: string, cleanupCommand?: string) => {
+  const parentPid = currentPid();
+  if (!parentPid) return command;
+  const cleanup = cleanupCommand ? `${cleanupCommand} >/dev/null 2>&1 || true` : ":";
+
+  return [
+    `__devtui_parent=${parentPid}`,
+    "__devtui_group=$$",
+    "(",
+    '  while kill -0 "$__devtui_parent" 2>/dev/null; do sleep 1; done',
+    `  ${cleanup}`,
+    '  kill -TERM -"$__devtui_group" 2>/dev/null',
+    "  sleep 2",
+    '  kill -KILL -"$__devtui_group" 2>/dev/null',
+    ") &",
+    "__devtui_watchdog=$!",
+    "trap 'kill \"$__devtui_watchdog\" 2>/dev/null' EXIT",
+    command,
+    "__devtui_status=$?",
+    cleanup,
+    'kill "$__devtui_watchdog" 2>/dev/null',
+    'exit "$__devtui_status"',
+  ].join("\n");
+};
+
 export const makeProcessRunner = (
   config: DevtuiConfig,
   scope: Scope.Scope,
@@ -178,9 +216,11 @@ export const makeProcessRunner = (
     const runProcess = (
       process: ProcessRuntime,
       runId: number,
+      startGate: Deferred.Deferred<void>,
     ): Effect.Effect<void, LogStoreError> =>
       Effect.scoped(
         Effect.gen(function* () {
+          yield* Deferred.await(startGate);
           const startedAtMs = yield* Clock.currentTimeMillis;
           yield* updateProcess(snapshotRef, process.id, (current) => ({
             ...current,
@@ -198,15 +238,20 @@ export const makeProcessRunner = (
             `starting: ${process.spec.command}`,
           );
 
-          const handle = (yield* ChildProcess.make(process.spec.command, {
-            cwd: process.spec.cwd,
-            env: process.spec.env ? { ...process.spec.env } : undefined,
-            extendEnv: true,
-            shell: true,
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "pipe",
-          })) as ChildProcessHandle;
+          const handle = (yield* ChildProcess.make(
+            superviseShellCommand(process.spec.command, process.spec.cleanupCommand),
+            {
+              cwd: process.spec.cwd,
+              env: process.spec.env ? { ...process.spec.env } : undefined,
+              extendEnv: true,
+              detached: true,
+              ...processKillOptions,
+              shell: true,
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+            },
+          )) as ChildProcessHandle;
 
           yield* Ref.update(runningRef, (running) => {
             const current = running.get(process.id);
@@ -262,11 +307,45 @@ export const makeProcessRunner = (
         ),
       ).pipe(Effect.provideContext(context));
 
+    const runCleanup = (process: ProcessRuntime) => {
+      const cleanupCommand = process.spec.cleanupCommand;
+      return cleanupCommand === undefined
+        ? Effect.void
+        : Effect.scoped(
+            Effect.gen(function* () {
+              const handle = (yield* ChildProcess.make(cleanupCommand, {
+                cwd: process.spec.cwd,
+                env: process.spec.env ? { ...process.spec.env } : undefined,
+                extendEnv: true,
+                shell: true,
+                stdin: "ignore",
+                stdout: "pipe",
+                stderr: "pipe",
+              })) as ChildProcessHandle;
+
+              yield* handle.exitCode;
+            }),
+          ).pipe(
+            Effect.provideContext(context),
+            Effect.catchCause((cause) =>
+              appendLog(
+                snapshotRef,
+                logStore,
+                process,
+                "system",
+                `cleanup failed: ${Cause.pretty(cause)}`,
+              ),
+            ),
+          );
+    };
+
     const startProcess = (process: ProcessRuntime) =>
       Effect.gen(function* () {
+        const startGate = yield* Deferred.make<void>();
         const runId = yield* Ref.getAndUpdate(runIdRef, (current) => current + 1);
-        const fiber = yield* runProcess(process, runId).pipe(Effect.forkIn(scope));
+        const fiber = yield* runProcess(process, runId, startGate).pipe(Effect.forkIn(scope));
         yield* setRunning(process.id, { runId, fiber, handle: null });
+        yield* Deferred.succeed(startGate, undefined);
       });
 
     const stopProcess = (id: string) =>
@@ -279,7 +358,7 @@ export const makeProcessRunner = (
         yield* appendLog(snapshotRef, logStore, process, "system", "stopping");
         if (running.handle) {
           yield* running.handle
-            .kill()
+            .kill(processKillOptions)
             .pipe(
               Effect.catchCause((cause) =>
                 appendLog(
@@ -292,6 +371,7 @@ export const makeProcessRunner = (
               ),
             );
         }
+        yield* runCleanup(process);
         yield* Fiber.interrupt(running.fiber);
         yield* Ref.update(runningRef, (current) => {
           const next = new Map(current);

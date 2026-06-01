@@ -22,6 +22,7 @@ import { RendererError } from "./core/domain.ts";
 import * as InstanceRegistry from "./core/instance-registry.ts";
 import * as LogStore from "./core/log-store.ts";
 import { makeProcessRunner } from "./core/runner.ts";
+import { installSignalShutdown } from "./signals.ts";
 
 const toReason = (cause: unknown) =>
   cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string"
@@ -68,6 +69,7 @@ const makeRenderer = (shutdown: Deferred.Deferred<void>) =>
 const main = Effect.scoped(
   Effect.gen(function* () {
     const shutdown = yield* Deferred.make<void>();
+    yield* installSignalShutdown(shutdown);
     const scope = yield* Effect.scope;
     const context = yield* Effect.context<BunServices.BunServices>();
     const stdio = yield* Stdio.Stdio;

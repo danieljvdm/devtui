@@ -17,7 +17,7 @@ import {
   type LogStream,
   type ProcessRuntime,
 } from "./domain.ts";
-import { stripAnsi } from "./text.ts";
+import { sanitizeAnsiForDisplay, stripAnsi } from "./text.ts";
 
 export interface LogStoreAppendInput {
   readonly process: ProcessRuntime;
@@ -98,7 +98,8 @@ const makeMemory = (options: LogStoreOptions = {}) =>
     const append = (input: LogStoreAppendInput) =>
       Effect.gen(function* () {
         const rawText = input.text.trimEnd();
-        const cleanText = stripAnsi(rawText);
+        const ansiText = sanitizeAnsiForDisplay(rawText);
+        const cleanText = stripAnsi(ansiText);
         if (!cleanText) return null;
 
         const timestampMs = yield* Clock.currentTimeMillis;
@@ -110,7 +111,7 @@ const makeMemory = (options: LogStoreOptions = {}) =>
           stream: input.stream,
           severity: severityFor(input.stream, cleanText),
           text: cleanText,
-          ansiText: rawText === cleanText ? undefined : rawText,
+          ansiText: ansiText === cleanText ? undefined : ansiText,
           timestampMs,
         };
 
@@ -158,26 +159,24 @@ export const layerJsonl = (
       return LogStore.of({
         ...memory,
         append: (input) =>
-          memory
-            .append(input)
-            .pipe(
-              Effect.tap((entry) =>
-                entry === null
-                  ? Effect.void
-                  : fs
-                      .writeFileString(options.path, `${JSON.stringify(entry)}\n`, { flag: "a" })
-                      .pipe(
-                        Effect.catchCause((cause) =>
-                          Effect.fail(
-                            new LogStoreError({
-                              operation: "append jsonl",
-                              reason: toReason(cause),
-                            }),
-                          ),
+          memory.append(input).pipe(
+            Effect.tap((entry) =>
+              entry === null
+                ? Effect.void
+                : fs
+                    .writeFileString(options.path, `${JSON.stringify(entry)}\n`, { flag: "a" })
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.fail(
+                          new LogStoreError({
+                            operation: "append jsonl",
+                            reason: toReason(cause),
+                          }),
                         ),
                       ),
-              ),
+                    ),
             ),
+          ),
         clear: Effect.gen(function* () {
           yield* memory.clear;
           yield* fs

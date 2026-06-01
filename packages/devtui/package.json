@@ -1,0 +1,40 @@
+{
+  "name": "devtui",
+  "version": "0.0.0",
+  "private": true,
+  "bin": {
+    "devtui": "src/index.tsx",
+    "devtui-broker": "src/mcp-broker.ts",
+    "devtui-mcp": "src/mcp.ts"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/config.ts",
+    "./config": "./src/config.ts",
+    "./presets": "./src/presets.ts"
+  },
+  "scripts": {
+    "demo": "bun run src/index.tsx --demo",
+    "mcp": "bun run src/mcp.ts",
+    "mcp:broker": "bun run src/mcp-broker.ts",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test src/config.test.ts src/core/port-allocator.test.ts src/core/runner.test.ts src/core/text.test.ts src/presets.test.ts src/ui/model.test.ts src/ui/ansi.test.ts src/ui/keyboard.test.ts"
+  },
+  "dependencies": {
+    "@effect/atom-react": "4.0.0-beta.49",
+    "@effect/platform-bun": "4.0.0-beta.74",
+    "@opentui/core": "^0.1.99",
+    "@opentui/react": "^0.1.99",
+    "effect": "catalog:",
+    "react": "^19.2.6",
+    "scheduler": "^0.27.0"
+  },
+  "devDependencies": {
+    "@effect/language-service": "^0.85.1",
+    "@effect/tsgo": "catalog:",
+    "@types/bun": "^1.3.14",
+    "@types/react": "^19.2.15",
+    "@typescript/native-preview": "catalog:",
+    "typescript": "^6.0.2"
+  }
+}

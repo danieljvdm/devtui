@@ -2,7 +2,7 @@
 import { BunRuntime } from "@effect/platform-bun";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import * as BunStdio from "@effect/platform-bun/BunStdio";
-import { Effect, Layer, Path, Stdio } from "effect";
+import { Deferred, Effect, Layer, Path, Stdio } from "effect";
 import {
   layerInfisicalIntegration,
   layerPortAllocator,
@@ -14,6 +14,7 @@ import * as InstanceRegistry from "./core/instance-registry.ts";
 import * as LogStore from "./core/log-store.ts";
 import { layerStdio as layerMcpStdio } from "./core/mcp.ts";
 import { makeProcessRunner } from "./core/runner.ts";
+import { installSignalShutdown } from "./signals.ts";
 
 const version = "0.0.0";
 
@@ -43,6 +44,8 @@ const registryDirectory = (path: Path.Path) => {
 
 const main = Effect.scoped(
   Effect.gen(function* () {
+    const shutdown = yield* Deferred.make<void>();
+    yield* installSignalShutdown(shutdown);
     const scope = yield* Effect.scope;
     const context = yield* Effect.context<BunServices.BunServices>();
     const stdio = yield* Stdio.Stdio;
@@ -69,15 +72,18 @@ const main = Effect.scoped(
         runner,
       });
 
-      yield* Layer.launch(
-        layerMcpStdio({
-          config,
-          runner,
-          cwd,
-          instanceId,
-          version,
-        }),
-      ).pipe(Effect.provide(BunStdio.layer));
+      yield* Effect.raceFirst(
+        Layer.launch(
+          layerMcpStdio({
+            config,
+            runner,
+            cwd,
+            instanceId,
+            version,
+          }),
+        ).pipe(Effect.provide(BunStdio.layer)),
+        Deferred.await(shutdown),
+      );
     }).pipe(
       Effect.provide(LogStore.makeLayer(config.logs)),
       Effect.provide(InstanceRegistry.layerFile({ directory: registryDirectory(path) })),

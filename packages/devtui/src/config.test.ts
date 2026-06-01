@@ -664,4 +664,36 @@ describe("config resolution", () => {
       ],
     ]);
   });
+
+  test("example configs resolve as runnable fixtures", async () => {
+    const one = await runResolve(["dev", "--config", "examples/vanilla-one.config.ts"]);
+    const multi = await runResolve(["dev", "--config", "examples/vanilla-multi.config.ts"]);
+    const portless = await runResolve(["dev", "--config", "examples/portless-multi.config.ts"]);
+
+    expect(one.source).toBe("explicit");
+    expect(one.config.processes.map((process) => process.name)).toEqual(["web"]);
+    expect(one.config.processes[0].endpoints).toEqual([
+      { label: "web", port: 5173, source: "config", url: "http://localhost:5173" },
+    ]);
+
+    expect(multi.config.processes.map((process) => process.name)).toEqual(["web", "api", "worker"]);
+    expect(
+      multi.config.processes.map((process) => process.command.includes("portless run")),
+    ).toEqual([false, false, false]);
+
+    expect(
+      portless.config.processes.map((process) => [
+        process.name,
+        process.command.includes("portless run"),
+      ]),
+    ).toEqual([
+      ["web", true],
+      ["api", false],
+      ["worker", false],
+    ]);
+    expect(portless.config.processes[0].env).toMatchObject({
+      PORT: "5174",
+      PORTLESS_PORT: "1355",
+    });
+  });
 });

@@ -5,6 +5,7 @@ import type { Fiber } from "effect/Fiber";
 export interface ProcessSpec {
   readonly name: string;
   readonly command: string;
+  readonly cleanupCommand?: string;
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string>>;
   readonly endpoints?: readonly Endpoint[];

@@ -71,6 +71,7 @@ describe("process presets", () => {
     ).toEqual({
       name: "app",
       command: "portless run --name percorso --app-port 5174 vp run 'app#dev'",
+      cleanupCommand: "portless proxy stop",
       cwd: undefined,
       env: undefined,
     });
@@ -88,6 +89,7 @@ describe("process presets", () => {
     ).toEqual({
       name: "app",
       command: "portless run --name percorso --app-port 5174 vp run 'app#dev'",
+      cleanupCommand: "portless proxy stop",
       cwd: undefined,
       env: {
         PORT: "5174",

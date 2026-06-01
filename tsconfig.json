@@ -1,26 +1,8 @@
 {
-  "$schema": "./node_modules/@effect/language-service/schema.json",
-  "compilerOptions": {
-    "target": "ES2023",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/react",
-    "verbatimModuleSyntax": true,
-    "isolatedModules": true,
-    "skipLibCheck": true,
-    "noEmit": true,
-    "types": ["@types/bun"],
-    "lib": ["ES2023", "DOM"],
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "rewriteRelativeImportExtensions": true,
-    "plugins": [
-      {
-        "name": "@effect/language-service"
-      }
-    ]
-  },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "examples/**/*.ts", "devtui.config.ts"]
+  "files": [],
+  "references": [
+    { "path": "./apps/app" },
+    { "path": "./packages/config" },
+    { "path": "./packages/devtui" }
+  ]
 }

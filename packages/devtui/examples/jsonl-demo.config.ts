@@ -1,5 +1,7 @@
 import { defineConfig } from "../src/config.ts";
 
+const noisy = new URL("./noisy.ts", import.meta.url).pathname;
+
 export default defineConfig({
   title: "devtui jsonl demo",
   logs: {
@@ -10,11 +12,11 @@ export default defineConfig({
   processes: [
     {
       name: "api",
-      command: "bun run examples/noisy.ts api --delay 250 --fail-every 5",
+      command: `bun run ${noisy} api --delay 250 --fail-every 5`,
     },
     {
       name: "worker",
-      command: "bun run examples/noisy.ts worker --delay 400",
+      command: `bun run ${noisy} worker --delay 400`,
     },
   ],
 });

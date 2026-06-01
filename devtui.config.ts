@@ -1,4 +1,4 @@
-import { defineConfig } from "./src/config.ts";
+import { defineConfig } from "devtui/config";
 
 export default defineConfig({
   title: "devtui dogfood",
@@ -9,15 +9,15 @@ export default defineConfig({
   processes: [
     {
       name: "api",
-      command: "bun run examples/noisy.ts api --delay 420 --fail-every 17",
+      command: "bun run packages/devtui/examples/noisy.ts api --delay 420 --fail-every 17",
     },
     {
       name: "web",
-      command: "bun run examples/noisy.ts web --delay 650",
+      command: "bun run packages/devtui/examples/noisy.ts web --delay 650",
     },
     {
       name: "worker",
-      command: "bun run examples/noisy.ts worker --delay 900 --fail-every 11",
+      command: "bun run packages/devtui/examples/noisy.ts worker --delay 900 --fail-every 11",
     },
   ],
 });

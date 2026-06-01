@@ -13,6 +13,9 @@ export default defineConfig({
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
   },
   run: {
-    cache: true,
+    cache: {
+      scripts: false,
+      tasks: true,
+    },
   },
 });

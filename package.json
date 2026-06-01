@@ -1,55 +1,38 @@
 {
-  "name": "devtui",
+  "name": "devtui-monorepo",
   "version": "0.0.0",
   "private": true,
-  "bin": {
-    "devtui": "src/index.tsx",
-    "devtui-broker": "src/mcp-broker.ts",
-    "devtui-mcp": "src/mcp.ts"
-  },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "type": "module",
-  "exports": {
-    ".": "./src/config.ts",
-    "./config": "./src/config.ts",
-    "./presets": "./src/presets.ts"
-  },
   "scripts": {
     "postinstall": "tsx scripts/postinstall.ts",
     "sync:effect": "tsx scripts/sync-effect-submodule.ts",
     "patch:tsgo": "tsx scripts/patch-tsgo.ts",
-    "dev": "bun run src/index.tsx",
-    "demo": "bun run src/index.tsx --demo",
-    "mcp": "bun run src/mcp.ts",
-    "mcp:broker": "bun run src/mcp-broker.ts",
-    "check": "tsc --noEmit && tsgo --noEmit -p scripts/tsconfig.json && bun run --cwd packages/config check && bun run --cwd apps/app check",
-    "check:tui": "tsc --noEmit",
-    "start": "bun run src/index.tsx",
+    "dev": "bun run packages/devtui/src/index.tsx",
+    "demo": "bun run packages/devtui/src/index.tsx --demo",
+    "mcp": "bun run packages/devtui/src/mcp.ts",
+    "mcp:broker": "bun run packages/devtui/src/mcp-broker.ts",
+    "example:one": "bun run packages/devtui/src/index.tsx dev --config packages/devtui/examples/vanilla-one.config.ts",
+    "example:multi": "bun run packages/devtui/src/index.tsx dev --config packages/devtui/examples/vanilla-multi.config.ts",
+    "example:portless": "bun run packages/devtui/src/index.tsx dev --config packages/devtui/examples/portless-multi.config.ts",
+    "check": "vp run -F './packages/*' -F './apps/*' check && tsgo --noEmit -p scripts/tsconfig.json",
+    "check:tui": "bun run --cwd packages/devtui check",
+    "start": "bun run packages/devtui/src/index.tsx",
     "dev:app": "bun run --cwd apps/app dev",
     "build:app": "bun run --cwd apps/app build"
-  },
-  "dependencies": {
-    "@effect/atom-react": "4.0.0-beta.49",
-    "@effect/platform-bun": "4.0.0-beta.74",
-    "@opentui/core": "^0.1.99",
-    "@opentui/react": "^0.1.99",
-    "effect": "catalog:",
-    "react": "^19.2.6",
-    "scheduler": "^0.27.0"
   },
   "devDependencies": {
     "@effect/language-service": "^0.85.1",
     "@effect/platform-node": "catalog:",
     "@effect/tsgo": "catalog:",
-    "@types/bun": "^1.3.14",
     "@types/node": "catalog:",
-    "@types/react": "^19.2.15",
     "@typescript/native-preview": "catalog:",
+    "devtui": "workspace:*",
+    "portless": "^0.13.1",
     "tsx": "catalog:",
-    "typescript": "^6.0.2",
     "vite-plus": "catalog:"
   },
   "overrides": {

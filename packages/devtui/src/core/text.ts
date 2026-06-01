@@ -1,6 +1,11 @@
-const ansiPattern = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+const ansiControlPattern =
+  /\x1b\][\s\S]*?(?:\x07|\x1b\\)|\x1b[P\^_X][\s\S]*?\x1b\\|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[ -/]*[@-~]/g;
+const sgrPattern = /^\x1b\[[0-?]*m$/;
 
-export const stripAnsi = (input: string) => input.replace(ansiPattern, "");
+export const stripAnsi = (input: string) => input.replace(ansiControlPattern, "");
+
+export const sanitizeAnsiForDisplay = (input: string) =>
+  input.replace(ansiControlPattern, (sequence) => (sgrPattern.test(sequence) ? sequence : ""));
 
 export const truncate = (input: string, width: number) => {
   if (width <= 0) return "";

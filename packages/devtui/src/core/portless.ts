@@ -88,6 +88,7 @@ const enabledPlan = (reason: string, envOptions: PortlessEnvOptions): PortlessPl
       command: args
         .map((part, index) => (index === args.length - 1 ? part : shellQuote(part)))
         .join(" "),
+      cleanupCommand: "portless proxy stop",
       env,
     };
   },

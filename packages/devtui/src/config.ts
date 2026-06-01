@@ -180,15 +180,15 @@ const demoConfig = defineConfig({
   processes: [
     {
       name: "api",
-      command: "bun run examples/noisy.ts api --delay 420 --fail-every 17",
+      command: `bun run ${new URL("../examples/noisy.ts", import.meta.url).pathname} api --delay 420 --fail-every 17`,
     },
     {
       name: "web",
-      command: "bun run examples/noisy.ts web --delay 650",
+      command: `bun run ${new URL("../examples/noisy.ts", import.meta.url).pathname} web --delay 650`,
     },
     {
       name: "worker",
-      command: "bun run examples/noisy.ts worker --delay 900 --fail-every 11",
+      command: `bun run ${new URL("../examples/noisy.ts", import.meta.url).pathname} worker --delay 900 --fail-every 11`,
     },
   ],
 });

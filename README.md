@@ -18,13 +18,23 @@ bun install
 bun run dev
 ```
 
-`bun run dev` is the dogfood command for this repo. As a product, `devtui dev` is the canonical command: it loads `devtui.config.ts` when one exists, otherwise it auto-detects workspace packages with dev-capable scripts and runs one process per package.
+`bun run dev` is the dogfood command for this repo. The CLI implementation lives in `packages/devtui`, with the root package acting as the Vite Plus monorepo orchestrator. As a product, `devtui dev` is the canonical command: it loads `devtui.config.ts` when one exists, otherwise it auto-detects workspace packages with dev-capable scripts and runs one process per package.
 
 Use the built-in demo explicitly when you want noisy sample processes:
 
 ```sh
 bun run demo
 ```
+
+The example testbed in `packages/devtui/examples` covers the process shapes devtui should keep supporting:
+
+```sh
+bun run example:one
+bun run example:multi
+bun run example:portless
+```
+
+Use `--print-plan` with any of those commands to inspect the resolved config without starting processes.
 
 If there is no config file and no dev tasks are detected, `devtui` fails with a clear no-task message instead of silently running the demo.
 
@@ -150,7 +160,7 @@ The current broker can discover/select instances, read logs from instances using
 
 ## Percorso Sketch
 
-[examples/percorso.config.ts](/Users/dan/dev/devtui/examples/percorso.config.ts) captures the first migration shape for `~/dev/percorso`: run `api#dev` and the app process directly under devtui, keep logs queryable through MCP, and leave port allocation/Portless as the next layer instead of burying process supervision inside the Vite plugin.
+[packages/devtui/examples/percorso.config.ts](/Users/dan/dev/devtui/packages/devtui/examples/percorso.config.ts) captures the first migration shape for `~/dev/percorso`: run `api#dev` and the app process directly under devtui, keep logs queryable through MCP, and leave port allocation/Portless as the next layer instead of burying process supervision inside the Vite plugin.
 
 ## Keys
 
