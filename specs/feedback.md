@@ -97,7 +97,7 @@ This should print:
 
 ```txt
 devtui auto plan
-root: /Users/dan/dev/percorso
+root: /Users/dan/dev/app
 package manager: bun, from packageManager=bun@1.3.9
 workspaces: apps/*, packages/*
 selected processes:
@@ -404,13 +404,11 @@ Default strategy:
 - If the root script is custom and high-risk, run the root script as one process unless `--prefer packages` is set.
 - If the root script is `vp dev` with project-specific orchestration, treat it as high-risk until Vite Plus metadata detection exists.
 
-For Percorso specifically, package-level decomposition is the right target because the existing root `vite.config.ts` plugin is exactly the orchestration devtui should absorb over time.
-
 ### 5. Prefer package-local dev commands over `vp run target#dev`
 
-This is important because the selected Percorso regression shows that the API must run directly so Infisical env reaches `api-dev`/Wrangler.
+This is important when an API must run directly so Infisical env reaches the package-local dev command.
 
-So for Percorso-like packages, prefer:
+For these packages, prefer:
 
 ```sh
 bun run --cwd apps/api dev -- <apiPort> <inspectorPort>
@@ -433,45 +431,6 @@ Use package name first, path second:
 - duplicate names get suffixes based on path
 
 This keeps MCP process targeting stable.
-
----
-
-## Percorso target behavior
-
-For the current Percorso shape, `devtui dev` should eventually discover:
-
-- package manager: Bun
-- workspaces: `apps/*`, `packages/*`
-- dev packages:
-  - `apps/api`
-  - `apps/app`
-
-- Infisical: enabled if `.infisical.json` exists and not disabled
-- Portless: enabled only when requested or project declares it
-- ports:
-  - API port
-  - API inspector port
-  - app port
-
-- app env:
-  - API base URL
-  - app port/HMR env where needed
-
-- API env:
-  - API port
-  - inspector port
-  - secrets available to `api-dev`
-
-The first configless Percorso plan should preserve the explicit-config workaround:
-
-```txt
-api: direct package dev command, wrapped with Infisical when enabled
-app: app dev command, with API URL and app port env
-```
-
-The detector should not blindly choose `vp run api#dev`, because the selected repo already documents that this lost required runtime keys.
-
----
 
 ## Infisical strategy
 
@@ -515,8 +474,6 @@ DEVTUI_INFISICAL_ENV=dev
 DEVTUI_INFISICAL_PATHS=/,/runtime
 DEVTUI_INFISICAL_WATCH=0
 ```
-
-Project-specific env like `PERCORSO_INFISICAL=0` can remain as a Percorso compatibility adapter, but generic devtui should prefer `DEVTUI_*`.
 
 ### Failure behavior
 
@@ -752,13 +709,10 @@ Both need Effect services because they touch child processes, env, temp files, p
 
 ### Be conservative with project-specific magic
 
-Percorso needs some smart behavior, but devtui core should not become a pile of hard-coded app names.
-
-A good compromise:
+devtui core should not become a pile of hard-coded app names. A good compromise:
 
 - generic detectors for package scripts, workspaces, Vite/Vite Plus, Wrangler, Portless, Infisical
 - convention adapters for common env names
-- a small dogfood “Percorso recipe” only if absolutely necessary
 - explicit config remains the final override
 
 ---
@@ -835,9 +789,9 @@ For each package manager:
 
 Keep existing `presets.test.ts` and extend it rather than replacing it.
 
-### 6. Percorso regression tests
+### 6. App/API regression tests
 
-Use the selected Percorso fixture as a first-class regression suite.
+Use a representative app/API fixture as a first-class regression suite.
 
 Assert that configless detection produces:
 
@@ -847,11 +801,9 @@ Assert that configless detection produces:
 - app receives app port
 - app receives API base URL
 - Infisical wraps both processes when enabled
-- `PERCORSO_INFISICAL=0` or generic `DEVTUI_INFISICAL=0` disables it
+- `DEVTUI_INFISICAL=0` disables it
 - Portless wraps app only when enabled
 - no secret values are serialized into plan diagnostics, registry entries, or MCP status
-
-This should replace the need for a permanent `percorso/devtui.config.ts`.
 
 ### 7. Infisical tests
 
@@ -940,7 +892,7 @@ Have fixtures for:
 - pnpm monorepo
 - Yarn monorepo
 - npm workspace repo
-- Percorso
+- app/API workspace
 - Infisical enabled
 - Portless enabled
 - ambiguous root aggregator
@@ -970,7 +922,7 @@ Support Bun, pnpm, Yarn, npm monorepos. Select packages with `scripts.dev`. Skip
 
 ### Phase 3: Infisical auto integration
 
-Detect `.infisical.json`, wrap selected processes, support overrides, preserve Percorso direct API command regression.
+Detect `.infisical.json`, wrap selected processes, support overrides, and preserve direct API command execution when required.
 
 ### Phase 4: Ports and endpoint metadata
 

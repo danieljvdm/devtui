@@ -16,7 +16,7 @@ import { layerStdio as layerMcpStdio } from "./core/mcp.ts";
 import { makeProcessRunner } from "./core/runner.ts";
 import { installSignalShutdown } from "./signals.ts";
 
-const version = "0.0.0";
+const version = "0.1.0";
 
 const currentPid = () =>
   "process" in globalThis &&

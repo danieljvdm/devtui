@@ -6,7 +6,7 @@ import { Effect, Layer, Path } from "effect";
 import * as InstanceRegistry from "./core/instance-registry.ts";
 import { layerStdio as layerBrokerStdio } from "./core/mcp-broker.ts";
 
-const version = "0.0.0";
+const version = "0.1.0";
 
 const registryDirectory = (path: Path.Path) => {
   const envDirectory =

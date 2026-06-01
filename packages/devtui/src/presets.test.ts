@@ -41,8 +41,8 @@ describe("process presets", () => {
     expect(
       withInfisical(
         withEnv(vitePlusRun("api", "api#dev"), {
-          PERCORSO_API_PORT: "8787",
-          PERCORSO_API_INSPECTOR_PORT: "9233",
+          API_PORT: "8787",
+          API_INSPECTOR_PORT: "9233",
         }),
         {
           env: "dev",
@@ -56,8 +56,8 @@ describe("process presets", () => {
       command: "infisical run --project-config-dir . --env dev --path / -- vp run 'api#dev'",
       cwd: undefined,
       env: {
-        PERCORSO_API_INSPECTOR_PORT: "9233",
-        PERCORSO_API_PORT: "8787",
+        API_INSPECTOR_PORT: "9233",
+        API_PORT: "8787",
       },
     });
   });
@@ -66,11 +66,11 @@ describe("process presets", () => {
     expect(
       withPortless(vitePlusRun("app", "app#dev"), {
         appPort: 5174,
-        name: "percorso",
+        name: "web",
       }),
     ).toEqual({
       name: "app",
-      command: "portless run --name percorso --app-port 5174 vp run 'app#dev'",
+      command: "portless run --name web --app-port 5174 vp run 'app#dev'",
       cleanupCommand: "portless proxy stop",
       cwd: undefined,
       env: undefined,
@@ -82,13 +82,13 @@ describe("process presets", () => {
       withPortless(withEnv(vitePlusRun("app", "app#dev"), { PORT: "5174" }), {
         appPort: 5174,
         https: false,
-        name: "percorso",
+        name: "web",
         proxyPort: 1355,
         syncHosts: false,
       }),
     ).toEqual({
       name: "app",
-      command: "portless run --name percorso --app-port 5174 vp run 'app#dev'",
+      command: "portless run --name web --app-port 5174 vp run 'app#dev'",
       cleanupCommand: "portless proxy stop",
       cwd: undefined,
       env: {

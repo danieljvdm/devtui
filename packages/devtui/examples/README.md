@@ -24,4 +24,3 @@ bun run packages/devtui/src/index.tsx dev --config packages/devtui/examples/port
 - `vanilla-multi.config.ts` starts web, api, and worker processes without integrations.
 - `portless-multi.config.ts` wraps only the web process with Portless, while api and worker stay direct.
 - `jsonl-demo.config.ts` writes logs to `.devtui/jsonl-demo.jsonl` for broker/log-store testing.
-- `percorso.config.ts` is the Percorso-shaped migration sketch.
