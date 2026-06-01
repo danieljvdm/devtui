@@ -920,7 +920,6 @@ export const App = ({
     ? [
         ["r", "restart"],
         ["R", "restart all"],
-        ["?", "help"],
         ["q", "quit"],
       ]
     : view.selectionCount > 0
@@ -930,19 +929,12 @@ export const App = ({
           ["esc", "clear"],
           ["q", "quit"],
         ]
-      : view.focusedPane === "logs"
-        ? [
-            ["x", "mark"],
-            ["V", "visual"],
-            ["c", "copy"],
-            ["?", "help"],
-          ]
-        : [
-            ["c", "copy"],
-            ["C", "clear"],
-            ["?", "help"],
-            ["q", "quit"],
-          ];
+      : [
+          ["c", "copy"],
+          ["C", "clear"],
+          ["h/l", "focus"],
+          ["q", "quit"],
+        ];
 
   return (
     <box
@@ -1034,7 +1026,7 @@ export const App = ({
       )}
       <FilterLine filterMode={filterMode} filterText={filterText} width={width} />
       <Divider width={width} solid />
-      <box height={1} paddingLeft={1} paddingRight={1}>
+      <box height={1} flexDirection="row" paddingLeft={1} paddingRight={1}>
         <text wrapMode="none" truncate>
           <span fg={colors.dim}>{view.focusedPane}</span>
           <span fg={colors.separator}>{"  "}</span>
@@ -1067,7 +1059,9 @@ export const App = ({
               <span fg={colors.muted}>{logLevel}</span>
             </>
           )}
-          <span fg={colors.separator}>{"     "}</span>
+        </text>
+        <box flexGrow={1} />
+        <text wrapMode="none">
           {quitArmed ? (
             <span fg={colors.yellow} attributes={TextAttributes.BOLD}>
               press q again to quit
