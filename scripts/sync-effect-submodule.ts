@@ -1,6 +1,5 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, FileSystem, Path, Schema as S, Stream } from "effect";
-import { Command as CliCommand } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
 
 const SUBMODULE_PATH = "repos/effect-smol";
@@ -128,7 +127,7 @@ const ensureSubmoduleInitialized = Effect.fn("ensureSubmoduleInitialized")(funct
 
 const syncEffectSubmodule = Effect.gen(function* () {
   if (process.env.CI === "true") {
-    yield* Console.error("Effect submodule skipped: CI=true");
+    yield* Console.log("Effect submodule skipped: CI=true");
     return;
   }
 
@@ -136,7 +135,7 @@ const syncEffectSubmodule = Effect.gen(function* () {
   const version = yield* readEffectVersion(rootDir);
   const tag = `effect@${version}`;
 
-  yield* Console.error(`Effect submodule: syncing ${tag}`);
+  yield* Console.log(`Effect submodule: syncing ${tag}`);
   yield* ensureSubmoduleInitialized(rootDir, sentinel);
   yield* runGit(submoduleDir, [
     "fetch",
@@ -153,20 +152,13 @@ const syncEffectSubmodule = Effect.gen(function* () {
 
   if (current !== target) {
     yield* runGit(submoduleDir, ["checkout", "--detach", target]);
-    yield* Console.error(`Effect submodule: ${tag} -> ${target.slice(0, 12)}`);
+    yield* Console.log(`Effect submodule: ${tag} -> ${target.slice(0, 12)}`);
     return;
   }
 
-  yield* Console.error(`Effect submodule: ${tag} already current`);
+  yield* Console.log(`Effect submodule: ${tag} already current`);
 });
 
-const syncCommand = CliCommand.make("sync-effect-submodule", {}, () => syncEffectSubmodule).pipe(
-  CliCommand.withDescription("Sync repos/effect-smol to the root catalog's effect version."),
-);
-
-const program = CliCommand.run(syncCommand, { version: "1.0.0" }).pipe(
-  Effect.scoped,
-  Effect.provide(NodeServices.layer),
-);
+const program = syncEffectSubmodule.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 NodeRuntime.runMain(program, { disableErrorReporting: true });
