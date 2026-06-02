@@ -11,6 +11,8 @@ export interface UiState {
   readonly focusedPane: FocusedPane;
   readonly filterMode: boolean;
   readonly filterText: string;
+  readonly searchMode: boolean;
+  readonly searchText: string;
   readonly logLevel: LogLevelFilter;
   readonly processPickerOpen: boolean;
   readonly logAnchorId: number | null;
@@ -36,6 +38,8 @@ export const viewIdAtom = Atom.make<ViewId>("merged").pipe(Atom.keepAlive);
 export const focusedPaneAtom = Atom.make<FocusedPane>("processes").pipe(Atom.keepAlive);
 export const filterModeAtom = Atom.make(false).pipe(Atom.keepAlive);
 export const filterTextAtom = Atom.make("").pipe(Atom.keepAlive);
+export const searchModeAtom = Atom.make(false).pipe(Atom.keepAlive);
+export const searchTextAtom = Atom.make("").pipe(Atom.keepAlive);
 export const logLevelAtom = Atom.make<LogLevelFilter>("all").pipe(Atom.keepAlive);
 export const processPickerOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
 export const logAnchorIdAtom = Atom.make<number | null>(null).pipe(Atom.keepAlive);

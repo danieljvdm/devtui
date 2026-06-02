@@ -12,8 +12,10 @@ export interface ViewModelInput {
   readonly snapshot: RunnerSnapshot;
   readonly viewId: string;
   readonly filterText: string;
+  readonly searchText: string;
   readonly logLevel: LogLevelFilter;
   readonly filterMode: boolean;
+  readonly searchMode: boolean;
   readonly showProcessList: boolean;
   readonly sideRail: boolean;
   readonly logAnchorId: number | null;
@@ -92,6 +94,10 @@ export interface ViewModel {
   readonly selectedLogIds: ReadonlySet<number>;
   readonly selectionCount: number;
   readonly visualMode: boolean;
+  readonly filteredCount: number;
+  readonly hiddenLogCount: number;
+  readonly searchMatchCount: number;
+  readonly selectedSearchMatchIndex: number | null;
   readonly displayRowCount: number;
   readonly scrollbar: ScrollbarModel | null;
 }
@@ -101,6 +107,59 @@ export interface ScrollbarModel {
   readonly thumbHeight: number;
   readonly trackHeight: number;
 }
+
+export interface LayoutModel {
+  readonly showSideRail: boolean;
+  readonly showCompactSideRail: boolean;
+  readonly showAnySideRail: boolean;
+  readonly showTopProcesses: boolean;
+  readonly processRailWidth: number;
+  readonly logPaneWidth: number;
+}
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+export const processRailWidthFor = (
+  processes: readonly ProcessRuntime[],
+  mode: "full" | "compact",
+) => {
+  const indexWidth = Math.max(1, String(processes.length).length);
+  const longestName = Math.max(
+    "merged".length,
+    ...processes.map((process) => process.spec.name.length),
+  );
+  const maxRailWidth = mode === "full" ? 24 : 20;
+  const maxNameWidth = Math.max(3, maxRailWidth - indexWidth - 9);
+  const nameWidth = clamp(longestName, "merged".length, maxNameWidth);
+
+  // Left/right padding + selector + index + status dot + spaces + process name,
+  // plus two spare columns so the rail does not feel cramped.
+  return indexWidth + 9 + nameWidth;
+};
+
+export const buildLayoutModel = (
+  width: number,
+  height: number,
+  processes: readonly ProcessRuntime[] = [],
+): LayoutModel => {
+  const showSideRail = width >= 110 && height >= 18;
+  const showCompactSideRail = !showSideRail && width >= 76 && height >= 18;
+  const showAnySideRail = showSideRail || showCompactSideRail;
+  const showTopProcesses = !showAnySideRail && width >= 72 && height >= 22;
+  const processRailWidth = showAnySideRail
+    ? processRailWidthFor(processes, showSideRail ? "full" : "compact")
+    : width;
+  const logPaneWidth = showAnySideRail ? Math.max(1, width - processRailWidth - 1) : width;
+
+  return {
+    showSideRail,
+    showCompactSideRail,
+    showAnySideRail,
+    showTopProcesses,
+    processRailWidth,
+    logPaneWidth,
+  };
+};
 
 export const filterLogs = (
   logs: readonly LogEntry[],
@@ -115,6 +174,12 @@ export const filterLogs = (
     if (!lowerFilter) return true;
     return `${log.processName} ${log.stream} ${log.text}`.toLowerCase().includes(lowerFilter);
   });
+};
+
+const logMatchesQuery = (log: LogEntry, query: string) => {
+  const lowerQuery = query.trim().toLowerCase();
+  if (!lowerQuery) return false;
+  return `${log.processName} ${log.stream} ${log.text}`.toLowerCase().includes(lowerQuery);
 };
 
 export const activeLabel = (processes: readonly ProcessRuntime[], viewId: string) =>
@@ -201,13 +266,19 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
   const processPaneHeight = input.showProcessList
     ? Math.min(input.height - 5, input.snapshot.processes.length + 4)
     : 0;
-  const filterHeight = input.filterMode ? 1 : 0;
-  // Header (2) + header rule (1) + status rule (1) + status bar (1) = 5, plus a
-  // second rule (1) under the top process list when it is shown.
-  const fixedChromeHeight = input.sideRail || !input.showProcessList ? 5 : 6;
+  const queryHeight =
+    input.filterMode ||
+    input.searchMode ||
+    input.filterText.length > 0 ||
+    input.searchText.length > 0
+      ? 1
+      : 0;
+  // Status rule (1) + status bar (1), plus a second rule under the top process
+  // list when it is shown.
+  const fixedChromeHeight = input.sideRail || !input.showProcessList ? 2 : 3;
   const logPaneHeight = Math.max(
     1,
-    input.height - processPaneHeight - filterHeight - fixedChromeHeight,
+    input.height - processPaneHeight - queryHeight - fixedChromeHeight,
   );
   const canFocusProcesses = input.sideRail || input.showProcessList;
   const focusedPane = canFocusProcesses ? input.focusedPane : "logs";
@@ -217,6 +288,11 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
     input.filterText,
     input.logLevel,
   );
+  const unfilteredViewLogs = filterLogs(input.snapshot.logs, input.viewId, "", input.logLevel);
+  const searchMatches =
+    input.searchText.trim().length === 0
+      ? []
+      : visibleLogs.filter((log) => logMatchesQuery(log, input.searchText));
   const unconstrainedRows = buildDisplayRows(visibleLogs, input.logWidth, input.nameColWidth);
   const hasScrollbar = unconstrainedRows.length > logPaneHeight;
   const displayRows = hasScrollbar
@@ -245,6 +321,10 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
         )?.log ??
         visibleLogs.find((log) => log.id === input.selectedLogId) ??
         null);
+  const selectedSearchMatchZeroIndex =
+    selectedLog === null ? -1 : searchMatches.findIndex((log) => log.id === selectedLog.id);
+  const selectedSearchMatchIndex =
+    selectedSearchMatchZeroIndex >= 0 ? selectedSearchMatchZeroIndex + 1 : null;
 
   const selectedLogIds = resolveSelectedLogIds(
     displayRows,
@@ -272,6 +352,10 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
     selectedLogIds,
     selectionCount: selectedLogIds.size,
     visualMode: input.visualAnchorId !== null,
+    filteredCount: visibleLogs.length,
+    hiddenLogCount: Math.max(0, unfilteredViewLogs.length - visibleLogs.length),
+    searchMatchCount: searchMatches.length,
+    selectedSearchMatchIndex,
     displayRowCount: displayRows.length,
     scrollbar: buildScrollbar(
       displayRows.length,

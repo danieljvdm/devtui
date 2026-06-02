@@ -58,6 +58,35 @@ export interface Endpoint {
   readonly source: "detected" | "portless" | "log" | "config";
 }
 
+const localhostHosts = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
+
+const endpointIsLocal = (endpoint: Endpoint) => {
+  try {
+    const url = new URL(endpoint.url);
+    return localhostHosts.has(url.hostname.toLowerCase());
+  } catch {
+    return endpoint.url.includes("localhost") || endpoint.url.includes("127.0.0.1");
+  }
+};
+
+const endpointRank = (endpoint: Endpoint) => {
+  if (endpoint.source === "portless") return 0;
+  if (!endpointIsLocal(endpoint)) return 1;
+  if (endpoint.source === "config") return 2;
+  if (endpoint.source === "log") return 3;
+  return 4;
+};
+
+/**
+ * Choose the URL most useful to copy from a process row. Portless URLs win
+ * because they are externally useful, then non-local URLs, then local endpoints.
+ */
+export const bestProcessEndpoint = (process: ProcessRuntime): Endpoint | null =>
+  process.endpoints.reduce<Endpoint | null>((best, endpoint) => {
+    if (best === null) return endpoint;
+    return endpointRank(endpoint) < endpointRank(best) ? endpoint : best;
+  }, null);
+
 export interface ResolvedDevtuiConfig {
   readonly config: DevtuiConfig;
   readonly source: ResolvedConfigSource;

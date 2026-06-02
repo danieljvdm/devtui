@@ -1,4 +1,4 @@
-import type { LogEntry, ProcessRuntime } from "../core/domain.ts";
+import { bestProcessEndpoint, type LogEntry, type ProcessRuntime } from "../core/domain.ts";
 import { extractPrintable } from "../core/text.ts";
 import { themeNamesMatching } from "../theme.ts";
 import { resolveSelectedLogIds } from "./model.ts";
@@ -21,7 +21,13 @@ export type UiCommand =
   | { readonly _tag: "none" }
   | { readonly _tag: "quit" }
   | { readonly _tag: "clearLogs" }
-  | { readonly _tag: "copyText"; readonly text: string; readonly logIds: readonly number[] }
+  | {
+      readonly _tag: "copyText";
+      readonly text: string;
+      readonly logIds: readonly number[];
+      readonly label?: string;
+    }
+  | { readonly _tag: "notify"; readonly message: string }
   | { readonly _tag: "stopProcess"; readonly id: string }
   | { readonly _tag: "restartProcess"; readonly id: string }
   | { readonly _tag: "restartAll" };
@@ -30,6 +36,19 @@ export interface KeyboardResult {
   readonly state: UiState;
   readonly command: UiCommand;
 }
+
+export type QuitConfirmationAction = "arm" | "execute";
+
+export const minimumQuitConfirmationAgeMs = 150;
+
+export const resolveQuitConfirmation = (
+  key: KeyboardKey,
+  quitArmed: boolean,
+  armedAgeMs = minimumQuitConfirmationAgeMs,
+): QuitConfirmationAction => {
+  if (key.ctrl && key.name === "c") return "execute";
+  return quitArmed && armedAgeMs >= minimumQuitConfirmationAgeMs ? "execute" : "arm";
+};
 
 export interface ScrollContext {
   readonly visibleRows: readonly {
@@ -200,6 +219,11 @@ export const keyboardKeyFromInputSequence = (sequence: string): KeyboardKey | nu
   if (sequence === "\b" || sequence === "\x7f") {
     return keyboardKey({ name: "backspace", raw: sequence, sequence });
   }
+  if (sequence === "\r") return keyboardKey({ name: "enter", raw: sequence, sequence });
+  if (sequence === "\t") return keyboardKey({ name: "tab", raw: sequence, sequence });
+  if (sequence === "\x03") return keyboardKey({ name: "c", raw: sequence, sequence, ctrl: true });
+  if (sequence === "\x0e") return keyboardKey({ name: "n", raw: sequence, sequence, ctrl: true });
+  if (sequence === "\x10") return keyboardKey({ name: "p", raw: sequence, sequence, ctrl: true });
   if (sequence === "\n") return keyboardKey({ name: "j", raw: sequence, sequence, ctrl: true });
   if (sequence === "\v") return keyboardKey({ name: "k", raw: sequence, sequence, ctrl: true });
   if (sequence === "\f") return keyboardKey({ name: "l", raw: sequence, sequence, ctrl: true });
@@ -224,6 +248,16 @@ export const keyboardKeyFromInputSequence = (sequence: string): KeyboardKey | nu
   }
 
   return null;
+};
+
+export const keyboardKeysFromInputSequence = (sequence: string): readonly KeyboardKey[] => {
+  const key = keyboardKeyFromInputSequence(sequence);
+  if (key) return [key];
+  if (sequence.includes("\x1b")) return [];
+  return Array.from(sequence).flatMap((character) => {
+    const parsed = keyboardKeyFromInputSequence(character);
+    return parsed ? [parsed] : [];
+  });
 };
 
 const ctrlArrowDirection = (key: KeyboardKey): ArrowDirection | null => {
@@ -314,6 +348,7 @@ const closeThemePicker = (state: UiState): UiState => ({
 const openThemePicker = (state: UiState): UiState => ({
   ...state,
   filterMode: false,
+  searchMode: false,
   helpOpen: false,
   processPickerOpen: false,
   themePickerOpen: true,
@@ -431,6 +466,81 @@ const copyCommand = (state: UiState, context: KeyboardContext): KeyboardResult =
           text: formatCopiedLog(context.selectedLog),
           logIds: [context.selectedLog.id],
         },
+      }
+    : { state, command: noCommand };
+};
+
+const selectedProcess = (state: UiState, processes: readonly ProcessRuntime[]) =>
+  state.viewId === "merged"
+    ? null
+    : (processes.find((process) => process.id === state.viewId) ?? null);
+
+const copyProcessUrlCommand = (
+  state: UiState,
+  processes: readonly ProcessRuntime[],
+): KeyboardResult => {
+  const process = selectedProcess(state, processes);
+  if (!process) {
+    return {
+      state,
+      command: { _tag: "notify", message: "select a process to copy its URL" },
+    };
+  }
+
+  const endpoint = bestProcessEndpoint(process);
+  return endpoint
+    ? {
+        state,
+        command: {
+          _tag: "copyText",
+          text: endpoint.url,
+          logIds: [],
+          label: `copied ${endpoint.source} URL`,
+        },
+      }
+    : {
+        state,
+        command: { _tag: "notify", message: `${process.spec.name} has no URL` },
+      };
+};
+
+const reduceQueryInput = (
+  key: KeyboardKey,
+  state: UiState,
+  mode: "filter" | "search",
+): KeyboardResult | null => {
+  const modeKey = mode === "filter" ? "filterMode" : "searchMode";
+  const textKey = mode === "filter" ? "filterText" : "searchText";
+
+  if (isEscape(key)) {
+    return {
+      state: resetLogScroll({ ...state, [modeKey]: false, [textKey]: "" }),
+      command: noCommand,
+    };
+  }
+  if (key.ctrl && key.name === "c") {
+    return {
+      state:
+        state[textKey].length > 0
+          ? resetLogScroll({ ...state, [textKey]: "" })
+          : { ...state, [modeKey]: false },
+      command: noCommand,
+    };
+  }
+  if (isEnter(key)) {
+    return { state: { ...state, [modeKey]: false }, command: noCommand };
+  }
+  if (isBackspace(key)) {
+    return {
+      state: resetLogScroll({ ...state, [textKey]: state[textKey].slice(0, -1) }),
+      command: noCommand,
+    };
+  }
+  const printable = extractPrintable(key);
+  return printable
+    ? {
+        state: resetLogScroll({ ...state, [textKey]: state[textKey] + printable }),
+        command: noCommand,
       }
     : { state, command: noCommand };
 };
@@ -555,37 +665,11 @@ export const reduceKeyboard = (
   const scroll = context.scroll;
 
   if (state.filterMode) {
-    if (isEscape(key)) {
-      return {
-        state: resetLogScroll({ ...state, filterMode: false, filterText: "" }),
-        command: noCommand,
-      };
-    }
-    if (key.ctrl && key.name === "c") {
-      return {
-        state:
-          state.filterText.length > 0
-            ? resetLogScroll({ ...state, filterText: "" })
-            : { ...state, filterMode: false },
-        command: noCommand,
-      };
-    }
-    if (isEnter(key)) {
-      return { state: { ...state, filterMode: false }, command: noCommand };
-    }
-    if (isBackspace(key)) {
-      return {
-        state: resetLogScroll({ ...state, filterText: state.filterText.slice(0, -1) }),
-        command: noCommand,
-      };
-    }
-    const printable = extractPrintable(key);
-    return printable
-      ? {
-          state: resetLogScroll({ ...state, filterText: state.filterText + printable }),
-          command: noCommand,
-        }
-      : { state, command: noCommand };
+    return reduceQueryInput(key, state, "filter") ?? { state, command: noCommand };
+  }
+
+  if (state.searchMode) {
+    return reduceQueryInput(key, state, "search") ?? { state, command: noCommand };
   }
 
   if (state.helpOpen) {
@@ -692,7 +776,7 @@ export const reduceKeyboard = (
   if (paneFocus) return { state: paneFocus, command: noCommand };
 
   if (key.name === "/" && !key.shift) {
-    return { state: { ...state, filterMode: true }, command: noCommand };
+    return { state: { ...state, filterMode: false, searchMode: true }, command: noCommand };
   }
 
   if (isEscape(key)) {
@@ -701,11 +785,22 @@ export const reduceKeyboard = (
     }
     return {
       state:
-        state.filterText || state.logLevel !== "all"
-          ? resetLogScroll({ ...state, filterText: "", logLevel: "all" })
+        state.filterText || state.searchText || state.logLevel !== "all"
+          ? resetLogScroll({ ...state, filterText: "", searchText: "", logLevel: "all" })
           : resetLogScroll({ ...state, viewId: "merged" }),
       command: noCommand,
     };
+  }
+
+  if (state.searchText && key.name === "f" && !key.ctrl && !key.meta && !key.shift) {
+    return {
+      state: resetLogScroll({ ...state, filterText: state.searchText, searchMode: false }),
+      command: noCommand,
+    };
+  }
+
+  if (key.name === "f" && !key.ctrl && !key.meta && !key.shift) {
+    return { state: { ...state, filterMode: true, searchMode: false }, command: noCommand };
   }
 
   if (key.name === "l" && key.shift) {
@@ -768,6 +863,15 @@ export const reduceKeyboard = (
         command: noCommand,
       };
     }
+  }
+
+  if (
+    state.focusedPane === "processes" &&
+    context.canFocusProcesses &&
+    key.name === "c" &&
+    !key.shift
+  ) {
+    return copyProcessUrlCommand(state, processes);
   }
 
   if (state.focusedPane === "processes" && context.canFocusProcesses && isNextRow(key)) {

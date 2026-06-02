@@ -77,6 +77,7 @@ const terminalQueryPatterns = [
   /\x1b\[\?997\$p/g,
   /\x1b\](?:4;\d+|10|11);\?\x07/g,
   /\x1b\[(?:14|16)t/g,
+  /\x1b\[\?25h/g,
 ] as const;
 
 const stripTerminalQueries = (value: string) =>
@@ -128,6 +129,7 @@ const makeQuietStdout = () => {
 };
 
 const enterAlternateScreen = "\x1b[?1049h\x1b[H\x1b[2J\x1b[?25l";
+const hideCursor = "\x1b[?25l";
 const leaveAlternateScreen = "\x1b[?25h\x1b[?1049l";
 
 const rendererGeometry = (
@@ -173,6 +175,7 @@ const makeRendererWithoutTerminalProbes = (config: CliRendererConfig) => {
   stdout.write(enterAlternateScreen);
   setupInputWithoutTerminalProbes(renderer);
   renderer.start();
+  stdout.write(hideCursor);
   return renderer;
 };
 

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { ProcessRuntime } from "../core/domain.ts";
 import {
   keyboardKeyFromInputSequence,
+  keyboardKeysFromInputSequence,
   reduceKeyboard,
+  resolveQuitConfirmation,
   type KeyboardContext,
   type KeyboardKey,
 } from "./keyboard.ts";
@@ -13,7 +15,10 @@ const processes: readonly ProcessRuntime[] = [
     id: "api",
     spec: { name: "api", command: "bun run api" },
     status: "running",
-    endpoints: [],
+    endpoints: [
+      { label: "local", url: "http://localhost:5173", port: 5173, source: "detected" },
+      { label: "portless", url: "https://api.example.dev", source: "portless" },
+    ],
     pid: 1,
     startedAtMs: 1,
     endedAtMs: null,
@@ -28,6 +33,8 @@ const state: UiState = {
   focusedPane: "logs",
   filterMode: false,
   filterText: "",
+  searchMode: false,
+  searchText: "",
   logLevel: "all",
   processPickerOpen: false,
   logAnchorId: null,
@@ -238,6 +245,18 @@ describe("reduceKeyboard log selection", () => {
     expect(result.state.markedLogIds).toEqual([]);
   });
 
+  test("c copies logs as before when the log pane is focused", () => {
+    const ctx = rowsContext([1]);
+    const result = reduceKeyboard(
+      key({ name: "c" }),
+      { ...state, focusedPane: "logs", selectedLogId: 1, selectedLogLineIndex: 0 },
+      processes,
+      { ...ctx, selectedLog: makeLog(1) },
+    );
+
+    expect(result.command).toMatchObject({ _tag: "copyText", logIds: [1] });
+  });
+
   test("y yanks the inclusive visual range between anchor and cursor", () => {
     const ctx = rowsContext([1, 2, 3, 4]);
     const result = reduceKeyboard(
@@ -289,9 +308,42 @@ describe("reduceKeyboard log selection", () => {
     );
     expect(result.command).toEqual({ _tag: "stopProcess", id: "api" });
   });
+
+  test("c copies the selected process URL from the process pane with portless precedence", () => {
+    const result = reduceKeyboard(
+      key({ name: "c" }),
+      { ...state, focusedPane: "processes", viewId: "api" },
+      processes,
+      context,
+    );
+    expect(result.command).toEqual({
+      _tag: "copyText",
+      text: "https://api.example.dev",
+      logIds: [],
+      label: "copied portless URL",
+    });
+  });
+
+  test("c in the process pane reports when no process URL is available", () => {
+    const processWithoutUrl = [{ ...processes[0]!, endpoints: [] }];
+    const result = reduceKeyboard(
+      key({ name: "c" }),
+      { ...state, focusedPane: "processes", viewId: "api" },
+      processWithoutUrl,
+      context,
+    );
+    expect(result.command).toEqual({ _tag: "notify", message: "api has no URL" });
+  });
 });
 
 describe("reduceKeyboard help and restart", () => {
+  test("q requires confirmation while ctrl-c quits immediately", () => {
+    expect(resolveQuitConfirmation(key({ name: "q" }), false)).toBe("arm");
+    expect(resolveQuitConfirmation(key({ name: "q" }), true, 149)).toBe("arm");
+    expect(resolveQuitConfirmation(key({ name: "q" }), true, 150)).toBe("execute");
+    expect(resolveQuitConfirmation(key({ name: "c", ctrl: true }), false)).toBe("execute");
+  });
+
   test("? opens the help overlay and esc closes it", () => {
     const opened = reduceKeyboard(key({ name: "?" }), state, processes, context);
     expect(opened.state.helpOpen).toBe(true);
@@ -348,6 +400,31 @@ describe("reduceKeyboard help and restart", () => {
     expect(result.state.themePickerOpen).toBe(true);
     expect(result.state.themeFilterText).toBe("");
     expect(result.command._tag).toBe("none");
+  });
+
+  test("/ edits search while f edits filter", () => {
+    const openedSearch = reduceKeyboard(key({ name: "/" }), state, processes, context);
+    expect(openedSearch.state.searchMode).toBe(true);
+    expect(openedSearch.state.filterMode).toBe(false);
+
+    const searched = reduceKeyboard(key({ name: "t" }), openedSearch.state, processes, context);
+    expect(searched.state.searchText).toBe("t");
+
+    const openedFilter = reduceKeyboard(key({ name: "f" }), state, processes, context);
+    expect(openedFilter.state.filterMode).toBe(true);
+    expect(openedFilter.state.searchMode).toBe(false);
+  });
+
+  test("escape clears active search and filter state", () => {
+    const result = reduceKeyboard(
+      key({ name: "escape" }),
+      { ...state, searchText: "tasks", filterText: "api", logLevel: "warn" },
+      processes,
+      context,
+    );
+    expect(result.state.searchText).toBe("");
+    expect(result.state.filterText).toBe("");
+    expect(result.state.logLevel).toBe("all");
   });
 
   test("theme selector previews themes with j/k and closes on enter", () => {
@@ -424,6 +501,26 @@ describe("keyboardKeyFromInputSequence escape", () => {
   test("builds keyboard events from printable characters", () => {
     expect(keyboardKeyFromInputSequence("q")).toMatchObject({ name: "q", raw: "q" });
     expect(keyboardKeyFromInputSequence("?")).toMatchObject({ name: "?", raw: "?" });
+  });
+
+  test("builds keyboard events from raw tmux control sequences", () => {
+    expect(keyboardKeyFromInputSequence("\r")).toMatchObject({ name: "enter" });
+    expect(keyboardKeyFromInputSequence("\t")).toMatchObject({ name: "tab" });
+    expect(keyboardKeyFromInputSequence("\x03")).toMatchObject({ name: "c", ctrl: true });
+    expect(keyboardKeyFromInputSequence("\x0e")).toMatchObject({ name: "n", ctrl: true });
+    expect(keyboardKeyFromInputSequence("\x10")).toMatchObject({ name: "p", ctrl: true });
+  });
+
+  test("splits batched printable tmux input into key events", () => {
+    expect(keyboardKeysFromInputSequence("/tasks\r").map((event) => event.name)).toEqual([
+      "/",
+      "t",
+      "a",
+      "s",
+      "k",
+      "s",
+      "enter",
+    ]);
   });
 
   test("does not mistake an arrow sequence for escape", () => {
