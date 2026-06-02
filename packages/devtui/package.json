@@ -42,7 +42,7 @@
     "mcp": "bun run src/mcp.ts",
     "mcp:broker": "bun run src/mcp-broker.ts",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test src/config.test.ts src/core/port-allocator.test.ts src/core/runner.test.ts src/core/text.test.ts src/presets.test.ts src/ui/model.test.ts src/ui/ansi.test.ts src/ui/keyboard.test.ts"
+    "test": "bun test src/config.test.ts src/core/port-allocator.test.ts src/core/runner.test.ts src/core/text.test.ts src/presets.test.ts src/ui/model.test.ts src/ui/ansi.test.ts src/ui/cursor.test.ts src/ui/keyboard.test.ts"
   },
   "dependencies": {
     "@effect/atom-react": "4.0.0-beta.49",

@@ -1,4 +1,4 @@
-import type { MouseEvent } from "@opentui/core";
+import { CliRenderEvents, type MouseEvent } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { Effect } from "effect";
@@ -11,6 +11,7 @@ import { setActiveTheme, type ThemeName } from "./theme.ts";
 import { AppView } from "./ui/components/app-view.tsx";
 import type { CopyFlash } from "./ui/components/log-rows.tsx";
 import { themePickerListHeightFor } from "./ui/components/overlays.tsx";
+import { keepTerminalCursorHidden } from "./ui/cursor.ts";
 import {
   keyboardKeysFromInputSequence,
   reduceKeyboard,
@@ -84,6 +85,7 @@ export const App = ({
 }) => {
   const renderer = useRenderer();
   const { width = 100, height = 30 } = useTerminalDimensions();
+  const hideNativeCursor = () => keepTerminalCursorHidden(renderer, process.stdout);
   const snapshotAtom = useMemo(() => Atom.subscriptionRef(runner.snapshotRef), [runner]);
   const snapshot = useAtomValue(snapshotAtom) as RunnerSnapshot;
   const [viewId, setViewId] = useAtom(viewIdAtom);
@@ -113,6 +115,22 @@ export const App = ({
     initialThemeApplied.current = true;
     setThemeName(initialThemeName);
   }, [initialThemeName, setThemeName]);
+
+  useEffect(() => {
+    hideNativeCursor();
+  });
+
+  useEffect(() => {
+    const hideOnFocus = () => hideNativeCursor();
+    renderer.on(CliRenderEvents.FOCUS, hideOnFocus);
+    renderer.on(CliRenderEvents.FOCUSED_RENDERABLE, hideOnFocus);
+    renderer.on(CliRenderEvents.FOCUSED_EDITOR, hideOnFocus);
+    return () => {
+      renderer.off(CliRenderEvents.FOCUS, hideOnFocus);
+      renderer.off(CliRenderEvents.FOCUSED_RENDERABLE, hideOnFocus);
+      renderer.off(CliRenderEvents.FOCUSED_EDITOR, hideOnFocus);
+    };
+  }, [renderer]);
 
   setActiveTheme(themeName);
 

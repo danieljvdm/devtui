@@ -29,6 +29,7 @@ import * as LogStore from "./core/log-store.ts";
 import { makeProcessRunner } from "./core/runner.ts";
 import { installSignalShutdown } from "./signals.ts";
 import { inferThemeName } from "./theme.ts";
+import { hideTerminalCursor, keepTerminalCursorHidden, showTerminalCursor } from "./ui/cursor.ts";
 
 const toReason = (cause: unknown) =>
   cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string"
@@ -128,9 +129,8 @@ const makeQuietStdout = () => {
   return quietStdout;
 };
 
-const enterAlternateScreen = "\x1b[?1049h\x1b[H\x1b[2J\x1b[?25l";
-const hideCursor = "\x1b[?25l";
-const leaveAlternateScreen = "\x1b[?25h\x1b[?1049l";
+const enterAlternateScreen = `\x1b[?1049h\x1b[H\x1b[2J${hideTerminalCursor}`;
+const leaveAlternateScreen = `${showTerminalCursor}\x1b[?1049l`;
 
 const rendererGeometry = (
   screenMode: CliRendererConfig["screenMode"],
@@ -175,7 +175,7 @@ const makeRendererWithoutTerminalProbes = (config: CliRendererConfig) => {
   stdout.write(enterAlternateScreen);
   setupInputWithoutTerminalProbes(renderer);
   renderer.start();
-  stdout.write(hideCursor);
+  keepTerminalCursorHidden(renderer, stdout);
   return renderer;
 };
 
