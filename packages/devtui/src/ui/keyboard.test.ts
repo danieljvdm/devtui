@@ -38,11 +38,16 @@ const state: UiState = {
   visualAnchorId: null,
   visualAnchorLineIndex: 0,
   helpOpen: false,
+  themeName: "system",
+  themePickerOpen: false,
+  themeFilterText: "",
+  themeScrollIndex: 0,
 };
 
 const context: KeyboardContext = {
   canFocusProcesses: true,
   selectedLog: null,
+  themePickerListHeight: 8,
   scroll: {
     visibleRows: [],
     startIndex: 0,
@@ -181,6 +186,7 @@ const rowsContext = (ids: readonly number[], overrides: Partial<KeyboardContext>
   return {
     canFocusProcesses: true,
     selectedLog: null,
+    themePickerListHeight: 8,
     ...overrides,
     scroll: {
       visibleRows,
@@ -293,6 +299,16 @@ describe("reduceKeyboard help and restart", () => {
     expect(closed.state.helpOpen).toBe(false);
   });
 
+  test("raw kitty escape closes the help overlay", () => {
+    const result = reduceKeyboard(
+      key({ raw: "\x1b[27u", sequence: "\x1b[27u" }),
+      { ...state, helpOpen: true },
+      processes,
+      context,
+    );
+    expect(result.state.helpOpen).toBe(false);
+  });
+
   test("? also opens via shift+/ and toggles closed when already open", () => {
     const opened = reduceKeyboard(key({ name: "/", shift: true }), state, processes, context);
     expect(opened.state.helpOpen).toBe(true);
@@ -326,6 +342,54 @@ describe("reduceKeyboard help and restart", () => {
     );
     expect(result.command).toEqual({ _tag: "restartProcess", id: "api" });
   });
+
+  test("t opens the theme selector", () => {
+    const result = reduceKeyboard(key({ name: "t" }), state, processes, context);
+    expect(result.state.themePickerOpen).toBe(true);
+    expect(result.state.themeFilterText).toBe("");
+    expect(result.command._tag).toBe("none");
+  });
+
+  test("theme selector previews themes with j/k and closes on enter", () => {
+    const opened = { ...state, themePickerOpen: true, themeName: "system" as const };
+    const moved = reduceKeyboard(key({ name: "j" }), opened, processes, context);
+    expect(moved.state.themeName).toBe("tokyonight");
+    expect(moved.state.themePickerOpen).toBe(true);
+
+    const closed = reduceKeyboard(key({ name: "enter" }), moved.state, processes, context);
+    expect(closed.state.themeName).toBe("tokyonight");
+    expect(closed.state.themePickerOpen).toBe(false);
+  });
+
+  test("theme selector scrolls to keep the previewed theme visible", () => {
+    const smallContext = { ...context, themePickerListHeight: 4 };
+    const opened = { ...state, themePickerOpen: true, themeName: "one-half-dark" as const };
+    const moved = reduceKeyboard(key({ name: "j" }), opened, processes, smallContext);
+    expect(moved.state.themeName).toBe("rosepine");
+    expect(moved.state.themeScrollIndex).toBeGreaterThan(0);
+  });
+
+  test("theme selector filters by printable input", () => {
+    const opened = { ...state, themePickerOpen: true, themeName: "system" as const };
+    const typedT = reduceKeyboard(key({ name: "t" }), opened, processes, context);
+    const typedO = reduceKeyboard(key({ name: "o" }), typedT.state, processes, context);
+    const result = reduceKeyboard(key({ name: "k" }), typedO.state, processes, context);
+    expect(result.state.themeFilterText).toBe("tok");
+    expect(result.state.themeName).toBe("tokyonight");
+  });
+
+  test("escape closes the theme selector and clears its query", () => {
+    const result = reduceKeyboard(
+      key({ name: "escape" }),
+      { ...state, themePickerOpen: true, themeFilterText: "tok", themeName: "tokyonight" },
+      processes,
+      context,
+    );
+    expect(result.state.themePickerOpen).toBe(false);
+    expect(result.state.themeFilterText).toBe("");
+    expect(result.state.themeScrollIndex).toBe(0);
+    expect(result.state.themeName).toBe("tokyonight");
+  });
 });
 
 describe("keyboardKeyFromInputSequence escape", () => {
@@ -333,6 +397,33 @@ describe("keyboardKeyFromInputSequence escape", () => {
     const esc = keyboardKeyFromInputSequence("\x1b");
     expect(esc).not.toBeNull();
     expect(esc!.name).toBe("escape");
+  });
+
+  test("recognizes kitty and modifyOtherKeys escape encodings", () => {
+    expect(keyboardKeyFromInputSequence("\x1b[27u")?.name).toBe("escape");
+    expect(keyboardKeyFromInputSequence("\x1b[27;1u")?.name).toBe("escape");
+    expect(keyboardKeyFromInputSequence("\x1b[27;1;27~")?.name).toBe("escape");
+  });
+
+  test("recognizes esc coalesced with terminal responses", () => {
+    expect(keyboardKeyFromInputSequence("\x1b\x1b]10;rgb:c0c0/caca/f5f5\x07")?.name).toBe("escape");
+    expect(keyboardKeyFromInputSequence("\x1b\x1b[?997;1n")?.name).toBe("escape");
+  });
+
+  test("raw kitty escape cancels filter mode and clears the query", () => {
+    const result = reduceKeyboard(
+      key({ raw: "\x1b[27;1u", sequence: "\x1b[27;1u" }),
+      { ...state, filterMode: true, filterText: "api" },
+      processes,
+      context,
+    );
+    expect(result.state.filterMode).toBe(false);
+    expect(result.state.filterText).toBe("");
+  });
+
+  test("builds keyboard events from printable characters", () => {
+    expect(keyboardKeyFromInputSequence("q")).toMatchObject({ name: "q", raw: "q" });
+    expect(keyboardKeyFromInputSequence("?")).toMatchObject({ name: "?", raw: "?" });
   });
 
   test("does not mistake an arrow sequence for escape", () => {

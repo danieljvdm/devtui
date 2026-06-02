@@ -1,5 +1,6 @@
 import * as Atom from "effect/unstable/reactivity/Atom";
 import type { LogSeverity } from "../core/domain.ts";
+import { inferThemeName, type ThemeName } from "../theme.ts";
 
 export type ViewId = "merged" | string;
 export type LogLevelFilter = "all" | LogSeverity;
@@ -20,7 +21,16 @@ export interface UiState {
   readonly visualAnchorId: number | null;
   readonly visualAnchorLineIndex: number;
   readonly helpOpen: boolean;
+  readonly themeName: ThemeName;
+  readonly themePickerOpen: boolean;
+  readonly themeFilterText: string;
+  readonly themeScrollIndex: number;
 }
+
+const initialThemeName =
+  typeof process === "object" && process !== null
+    ? (inferThemeName({ env: process.env }) ?? "system")
+    : "system";
 
 export const viewIdAtom = Atom.make<ViewId>("merged").pipe(Atom.keepAlive);
 export const focusedPaneAtom = Atom.make<FocusedPane>("processes").pipe(Atom.keepAlive);
@@ -36,3 +46,7 @@ export const markedLogIdsAtom = Atom.make<readonly number[]>([]).pipe(Atom.keepA
 export const visualAnchorIdAtom = Atom.make<number | null>(null).pipe(Atom.keepAlive);
 export const visualAnchorLineIndexAtom = Atom.make(0).pipe(Atom.keepAlive);
 export const helpOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
+export const themeNameAtom = Atom.make<ThemeName>(initialThemeName).pipe(Atom.keepAlive);
+export const themePickerOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
+export const themeFilterTextAtom = Atom.make("").pipe(Atom.keepAlive);
+export const themeScrollIndexAtom = Atom.make(0).pipe(Atom.keepAlive);

@@ -8,7 +8,7 @@ import type { ClipboardRuntime } from "./core/clipboard.ts";
 import type { ProcessRunner } from "./core/runner.ts";
 import type { DevtuiConfig, LogEntry, ProcessRuntime, RunnerSnapshot } from "./core/domain.ts";
 import { formatTime, pad, truncate } from "./core/text.ts";
-import { colors, rgba } from "./theme.ts";
+import { colors, rgba, setActiveTheme, themeNamesMatching, type ThemeName } from "./theme.ts";
 import {
   keyboardKeyFromInputSequence,
   reduceKeyboard,
@@ -37,6 +37,10 @@ import {
   processPickerOpenAtom,
   selectedLogIdAtom,
   selectedLogLineIndexAtom,
+  themeFilterTextAtom,
+  themeNameAtom,
+  themePickerOpenAtom,
+  themeScrollIndexAtom,
   visualAnchorIdAtom,
   visualAnchorLineIndexAtom,
   type LogLevelFilter,
@@ -94,6 +98,8 @@ const nameColumnWidth = (processes: readonly ProcessRuntime[]) => {
   const longest = processes.reduce((max, process) => Math.max(max, process.spec.name.length), 0);
   return clamp(longest, 3, 12);
 };
+
+const leftPad = (input: string, width: number) => truncate(input, width).padStart(width);
 
 // The dim metadata gutter (`HH:MM:SS  name  lvl │`) shown to the left of every
 // log message. Continuation rows blank the metadata but keep the divider so
@@ -176,6 +182,19 @@ const hintSpans = (hints: readonly Hint[]) =>
     </span>,
   ]);
 
+const modalHintSpans = (hints: readonly Hint[]) =>
+  hints.flatMap(([key, label], index) => [
+    <span key={`gap-${index}`} fg={colors.separator}>
+      {index === 0 ? "" : "  "}
+    </span>,
+    <span key={`key-${index}`} fg={colors.green} attributes={TextAttributes.BOLD}>
+      {key}
+    </span>,
+    <span key={`label-${index}`} fg={colors.muted}>
+      {` ${label}`}
+    </span>,
+  ]);
+
 const Divider = ({
   width,
   solid = false,
@@ -233,63 +252,41 @@ const Header = ({
   );
 };
 
-const ProcessMetrics = ({
-  process,
-  compact,
-  selected,
-}: {
-  readonly process: ProcessRuntime;
-  readonly compact: boolean;
-  readonly selected: boolean;
-}) => {
-  const detail = selected ? colors.selectedText : colors.muted;
-  const endpoint = compact
-    ? process.endpoints[0]?.port
-      ? `:${process.endpoints[0].port}`
-      : ""
-    : (process.endpoints[0]?.url ?? "");
-  return (
-    <>
-      {compact ? null : (
-        <span fg={detail}>
-          pid {process.pid ?? "-"}
-          {"  "}
-        </span>
-      )}
-      <span fg={colors.dim}>{process.lineCount}</span>
-      <span fg={colors.dim}>{compact ? "l " : " lines  "}</span>
-      <span fg={process.errorCount > 0 ? colors.yellow : colors.dim}>{process.errorCount}</span>
-      <span fg={colors.dim}>{compact ? "e" : " err"}</span>
-      {endpoint ? (
-        <span fg={selected ? colors.selectedText : colors.accent}>
-          {"  "}
-          {endpoint}
-        </span>
-      ) : null}
-    </>
-  );
-};
-
 const ProcessList = ({
   processes,
   viewId,
-  focused,
   width,
   showHelp,
 }: {
   readonly processes: readonly ProcessRuntime[];
   readonly viewId: string;
-  readonly focused: boolean;
   readonly width: number;
   readonly showHelp: boolean;
 }) => {
   const compact = width < 48;
   const indexWidth = Math.max(1, String(processes.length).length);
-  const nameWidth = compact ? Math.max(6, Math.min(12, width - 24)) : 14;
   const statusWidth = processes.reduce((max, process) => {
     return Math.max(max, statusLabel(process).length);
   }, 8);
+  const linesWidth = Math.max(
+    5,
+    processes.reduce((max, process) => Math.max(max, String(process.lineCount).length), 0),
+  );
+  const errorWidth = Math.max(
+    3,
+    processes.reduce((max, process) => Math.max(max, String(process.errorCount || ".").length), 0),
+  );
+  const portWidth = width >= 38 ? 6 : 0;
+  const textWidth = Math.max(1, width - 2);
+  const fixedTextWidth =
+    indexWidth + statusWidth + linesWidth + errorWidth + portWidth + (portWidth > 0 ? 7 : 6);
+  const nameWidth = Math.max(
+    compact ? 5 : 7,
+    Math.min(compact ? 12 : 18, textWidth - fixedTextWidth),
+  );
   const mergedSelected = viewId === "merged";
+  const mergedLabel = compact ? "all logs" : "all processes, combined";
+  const mergedGap = Math.max(1, indexWidth + 1);
   return (
     <box flexDirection="column" width={width}>
       <box
@@ -299,9 +296,9 @@ const ProcessList = ({
         backgroundColor={mergedSelected ? rgba(colors.selectedBg) : undefined}
       >
         <text wrapMode="none" truncate>
-          <span fg={mergedSelected ? colors.selectedText : focused ? colors.accent : colors.muted}>
+          <span fg={mergedSelected ? colors.accent : colors.muted}>
             {mergedSelected ? "> " : "  "}
-            {" ".repeat(indexWidth + 1)}
+            {" ".repeat(mergedGap)}
           </span>
           <span
             fg={mergedSelected ? colors.selectedText : colors.text}
@@ -309,11 +306,28 @@ const ProcessList = ({
           >
             {pad("merged", nameWidth)}
           </span>
-          <span fg={colors.dim}>{" all process logs"}</span>
+          <span fg={colors.dim}>
+            {"  "}
+            {mergedLabel}
+          </span>
         </text>
       </box>
+      <box height={1} paddingLeft={1} paddingRight={1}>
+        <text wrapMode="none" truncate>
+          <span fg={colors.dim}>
+            {"  "}
+            {leftPad("#", indexWidth)} {pad("process", nameWidth)} {pad("status", statusWidth)}{" "}
+            {leftPad("lines", linesWidth)} {leftPad("err", errorWidth)}
+            {portWidth > 0 ? ` ${leftPad("port", portWidth)}` : ""}
+          </span>
+        </text>
+      </box>
+      <Divider width={width} solid />
       {processes.map((process, index) => {
         const selected = viewId === process.id;
+        const port = process.endpoints[0]?.port;
+        const hasPort = port !== undefined;
+        const errorText = process.errorCount > 0 ? String(process.errorCount) : ".";
         return (
           <box
             key={process.id}
@@ -323,9 +337,9 @@ const ProcessList = ({
             backgroundColor={selected ? rgba(colors.selectedBg) : undefined}
           >
             <text wrapMode="none" truncate>
-              <span fg={selected ? colors.selectedText : colors.muted}>
+              <span fg={selected ? colors.accent : colors.muted}>
                 {selected ? "> " : "  "}
-                {pad(String(index + 1), indexWidth)}{" "}
+                {leftPad(String(index + 1), indexWidth)}{" "}
               </span>
               <span fg={selected ? colors.selectedText : colors.text}>
                 {pad(process.spec.name, nameWidth)}{" "}
@@ -333,7 +347,31 @@ const ProcessList = ({
               <span fg={statusColor(process.status)} attributes={TextAttributes.BOLD}>
                 {pad(statusLabel(process), statusWidth)}{" "}
               </span>
-              <ProcessMetrics process={process} compact={compact} selected={selected} />
+              <span fg={selected ? colors.selectedText : colors.dim}>
+                {leftPad(String(process.lineCount), linesWidth)}{" "}
+              </span>
+              <span
+                fg={
+                  process.errorCount > 0
+                    ? colors.yellow
+                    : selected
+                      ? colors.selectedText
+                      : colors.dim
+                }
+                attributes={process.errorCount > 0 ? TextAttributes.BOLD : undefined}
+              >
+                {leftPad(errorText, errorWidth)}
+              </span>
+              {portWidth > 0 ? (
+                <>
+                  <span fg={colors.dim}> </span>
+                  <span
+                    fg={hasPort ? (selected ? colors.selectedText : colors.accent) : colors.dim}
+                  >
+                    {leftPad(hasPort ? `:${port}` : ".", portWidth)}
+                  </span>
+                </>
+              ) : null}
             </text>
           </box>
         );
@@ -347,6 +385,7 @@ const ProcessList = ({
               ["p", "picker"],
               ["/", "filter"],
               ["L", "level"],
+              ["t", "theme"],
             ])}
           </text>
         </box>
@@ -616,6 +655,7 @@ const HELP_KEYS: readonly (readonly [string, string])[] = [
   ["c / y", "copy selection"],
   ["C", "clear log buffer"],
   ["r / R", "restart process / restart all"],
+  ["t", "choose theme"],
   ["?", "toggle this help"],
   ["q", "quit (press twice to confirm)"],
 ];
@@ -686,6 +726,125 @@ const HelpOverlay = ({
   );
 };
 
+const ThemeSelectorOverlay = ({
+  width,
+  height,
+  themeName,
+  query,
+  scrollIndex,
+}: {
+  readonly width: number;
+  readonly height: number;
+  readonly themeName: ThemeName;
+  readonly query: string;
+  readonly scrollIndex: number;
+}) => {
+  const rows = themeNamesMatching(query);
+  const modalMaxWidth = Math.max(1, width - 4);
+  const modalMinWidth = Math.min(36, modalMaxWidth);
+  const modalWidth = clamp(Math.floor(width * 0.86), modalMinWidth, Math.min(88, modalMaxWidth));
+  const modalMaxHeight = Math.max(1, height - 2);
+  const modalMinHeight = Math.min(9, modalMaxHeight);
+  const modalHeight = clamp(
+    9 + Math.min(rows.length, 8),
+    modalMinHeight,
+    Math.min(20, modalMaxHeight),
+  );
+  const listHeight = Math.max(1, modalHeight - 8);
+  const maxScrollIndex = Math.max(0, rows.length - listHeight);
+  const startIndex = Math.max(0, Math.min(scrollIndex, maxScrollIndex));
+  const visibleRows = rows.slice(startIndex, startIndex + listHeight);
+  const innerWidth = Math.max(1, modalWidth - 4);
+  const titleGap = Math.max(1, innerWidth - "Themes".length - "esc".length);
+  const searchText = truncate(query || "Search", Math.max(1, innerWidth - 2));
+
+  return (
+    <box
+      position="absolute"
+      top={0}
+      left={0}
+      width={width}
+      height={height}
+      backgroundColor={RGBA.fromValues(0, 0, 0, 0.55)}
+      justifyContent="center"
+      alignItems="center"
+    >
+      <box
+        width={modalWidth}
+        height={modalHeight}
+        flexDirection="column"
+        backgroundColor={rgba(colors.panelBg)}
+      >
+        <box height={1} />
+        <box height={1} paddingLeft={2} paddingRight={2}>
+          <text wrapMode="none" truncate>
+            <span fg={colors.text} attributes={TextAttributes.BOLD}>
+              Themes
+            </span>
+            <span fg={colors.separator}>{" ".repeat(titleGap)}</span>
+            <span fg={colors.muted}>esc</span>
+          </text>
+        </box>
+        <box height={1} />
+        <box height={1} paddingLeft={2} paddingRight={2} backgroundColor={rgba(colors.selectedBg)}>
+          <text wrapMode="none" truncate>
+            <span fg={query ? colors.text : colors.muted}>{searchText}</span>
+            <span fg={colors.text} attributes={TextAttributes.INVERSE}>
+              {" "}
+            </span>
+          </text>
+        </box>
+        <box height={1} />
+        <box height={listHeight} flexDirection="column">
+          {visibleRows.length === 0 ? (
+            <box height={1} paddingLeft={2} paddingRight={2}>
+              <text wrapMode="none" truncate>
+                <span fg={colors.dim}>no themes found</span>
+              </text>
+            </box>
+          ) : (
+            visibleRows.map((name) => {
+              const selected = name === themeName;
+              return (
+                <box
+                  key={name}
+                  height={1}
+                  paddingLeft={2}
+                  paddingRight={2}
+                  backgroundColor={selected ? rgba(colors.selectedBg) : undefined}
+                >
+                  <text wrapMode="none" truncate>
+                    <span fg={selected ? colors.selectedText : colors.accent}>
+                      {selected ? "● " : "  "}
+                    </span>
+                    <span
+                      fg={selected ? colors.selectedText : colors.text}
+                      attributes={selected ? TextAttributes.BOLD : undefined}
+                    >
+                      {name}
+                    </span>
+                  </text>
+                </box>
+              );
+            })
+          )}
+        </box>
+        <box height={1} />
+        <box height={1} paddingLeft={2} paddingRight={2}>
+          <text wrapMode="none" truncate>
+            {modalHintSpans([
+              ["j/k", "select"],
+              ["type", "search"],
+              ["enter", "close"],
+            ])}
+          </text>
+        </box>
+        <box height={1} />
+      </box>
+    </box>
+  );
+};
+
 const runCommand = (runner: ProcessRunner, clipboard: ClipboardRuntime, command: UiCommand) => {
   switch (command._tag) {
     case "none":
@@ -715,10 +874,12 @@ export const App = ({
   config,
   clipboard,
   runner,
+  initialThemeName,
 }: {
   readonly config: DevtuiConfig;
   readonly clipboard: ClipboardRuntime;
   readonly runner: ProcessRunner;
+  readonly initialThemeName: ThemeName;
 }) => {
   const renderer = useRenderer();
   const { width = 100, height = 30 } = useTerminalDimensions();
@@ -738,6 +899,17 @@ export const App = ({
   const [visualAnchorId, setVisualAnchorId] = useAtom(visualAnchorIdAtom);
   const [visualAnchorLineIndex, setVisualAnchorLineIndex] = useAtom(visualAnchorLineIndexAtom);
   const [helpOpen, setHelpOpen] = useAtom(helpOpenAtom);
+  const [themeName, setThemeName] = useAtom(themeNameAtom);
+  const [themePickerOpen, setThemePickerOpen] = useAtom(themePickerOpenAtom);
+  const [themeFilterText, setThemeFilterText] = useAtom(themeFilterTextAtom);
+  const [themeScrollIndex, setThemeScrollIndex] = useAtom(themeScrollIndexAtom);
+  const initialThemeApplied = useRef(false);
+  useEffect(() => {
+    if (initialThemeApplied.current) return;
+    initialThemeApplied.current = true;
+    setThemeName(initialThemeName);
+  }, [initialThemeName, setThemeName]);
+  setActiveTheme(themeName);
   const [copyFlash, setCopyFlash] = useState<CopyFlash | null>(null);
   const copyFlashTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const flashCopiedRows = (logIds: readonly number[]) => {
@@ -771,7 +943,7 @@ export const App = ({
   );
   const showSideRail = width >= 110 && height >= 18;
   const showTopProcesses = !showSideRail && width >= 72 && height >= 22;
-  const processRailWidth = showSideRail ? clamp(Math.floor(width * 0.28), 28, 42) : width;
+  const processRailWidth = showSideRail ? clamp(Math.floor(width * 0.34), 38, 58) : width;
   const logPaneWidth = showSideRail ? Math.max(1, width - processRailWidth - 1) : width;
   const nameColWidth = nameColumnWidth(snapshot.processes);
 
@@ -790,7 +962,19 @@ export const App = ({
     visualAnchorId,
     visualAnchorLineIndex,
     helpOpen,
+    themeName,
+    themePickerOpen,
+    themeFilterText,
+    themeScrollIndex,
   };
+  const themePickerListHeight = Math.max(
+    1,
+    clamp(
+      9 + Math.min(themeNamesMatching(themeFilterText).length, 8),
+      Math.min(9, Math.max(1, height - 2)),
+      Math.min(20, Math.max(1, height - 2)),
+    ) - 6,
+  );
   const view = buildViewModel({
     snapshot,
     viewId,
@@ -811,8 +995,8 @@ export const App = ({
     visualAnchorId,
     visualAnchorLineIndex,
   });
-  const stateRef = useRef({ state, snapshot, view });
-  stateRef.current = { state, snapshot, view };
+  const stateRef = useRef({ state, snapshot, view, themePickerListHeight });
+  stateRef.current = { state, snapshot, view, themePickerListHeight };
 
   const applyUiState = (nextState: UiState) => {
     setViewId(nextState.viewId);
@@ -829,6 +1013,10 @@ export const App = ({
     setVisualAnchorId(nextState.visualAnchorId);
     setVisualAnchorLineIndex(nextState.visualAnchorLineIndex);
     setHelpOpen(nextState.helpOpen);
+    setThemeName(nextState.themeName);
+    setThemePickerOpen(nextState.themePickerOpen);
+    setThemeFilterText(nextState.themeFilterText);
+    setThemeScrollIndex(nextState.themeScrollIndex);
   };
 
   const applyKeyboard = (key: KeyboardKey) => {
@@ -842,6 +1030,7 @@ export const App = ({
         maxStartIndex: current.view.maxScrollStartIndex,
         paneHeight: current.view.logPaneHeight,
       },
+      themePickerListHeight: current.themePickerListHeight,
     });
 
     applyUiState(result.state);
@@ -932,6 +1121,7 @@ export const App = ({
       : [
           ["c", "copy"],
           ["C", "clear"],
+          ["t", "theme"],
           ["h/l", "focus"],
           ["q", "quit"],
         ];
@@ -956,7 +1146,6 @@ export const App = ({
           <ProcessList
             processes={snapshot.processes}
             viewId={viewId}
-            focused={view.focusedPane === "processes"}
             width={processRailWidth}
             showHelp={false}
           />
@@ -990,13 +1179,7 @@ export const App = ({
         <>
           {showTopProcesses ? (
             <>
-              <ProcessList
-                processes={snapshot.processes}
-                viewId={viewId}
-                focused={view.focusedPane === "processes"}
-                width={width}
-                showHelp
-              />
+              <ProcessList processes={snapshot.processes} viewId={viewId} width={width} showHelp />
               <Divider width={width} />
             </>
           ) : null}
@@ -1029,6 +1212,9 @@ export const App = ({
       <box height={1} flexDirection="row" paddingLeft={1} paddingRight={1}>
         <text wrapMode="none" truncate>
           <span fg={colors.dim}>{view.focusedPane}</span>
+          <span fg={colors.separator}>{"  "}</span>
+          <span fg={colors.dim}>theme </span>
+          <span fg={colors.muted}>{themeName}</span>
           <span fg={colors.separator}>{"  "}</span>
           <span fg={view.isFollowing ? colors.green : colors.muted}>
             {view.isFollowing
@@ -1073,6 +1259,15 @@ export const App = ({
       </box>
       {helpOpen ? (
         <HelpOverlay width={width} height={height} processCount={snapshot.processes.length} />
+      ) : null}
+      {themePickerOpen ? (
+        <ThemeSelectorOverlay
+          width={width}
+          height={height}
+          themeName={themeName}
+          query={themeFilterText}
+          scrollIndex={themeScrollIndex}
+        />
       ) : null}
     </box>
   );

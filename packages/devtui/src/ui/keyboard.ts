@@ -1,5 +1,6 @@
 import type { LogEntry, ProcessRuntime } from "../core/domain.ts";
 import { extractPrintable } from "../core/text.ts";
+import { themeNamesMatching } from "../theme.ts";
 import { resolveSelectedLogIds } from "./model.ts";
 import type { LogLevelFilter, UiState, ViewId } from "./state.ts";
 
@@ -44,11 +45,28 @@ export interface KeyboardContext {
   readonly scroll: ScrollContext;
   readonly canFocusProcesses: boolean;
   readonly selectedLog: LogEntry | null;
+  readonly themePickerListHeight: number;
 }
 
 const noCommand: UiCommand = { _tag: "none" };
 
-const isEscape = (key: KeyboardKey) => key.name === "escape" || key.name === "esc";
+const isEscapeSequence = (sequence: string | undefined) =>
+  sequence === "\x1b" ||
+  sequence === "\x1b\x1b" ||
+  // A standalone ESC can be coalesced with terminal OSC/CSI/DCS replies before
+  // OpenTUI's timeout flushes it, especially in Ghostty inside tmux.
+  sequence?.startsWith("\x1b\x1b]") === true ||
+  sequence?.startsWith("\x1b\x1bP") === true ||
+  sequence?.startsWith("\x1b\x1b_") === true ||
+  /^\x1b\x1b\[(?:\?|\>)/.test(sequence ?? "") ||
+  /^\x1b\[27(?:;[0-9:]+)*u$/.test(sequence ?? "") ||
+  /^\x1b\[27;\d+;27~$/.test(sequence ?? "");
+
+const isEscape = (key: KeyboardKey) =>
+  key.name === "escape" ||
+  key.name === "esc" ||
+  isEscapeSequence(key.raw) ||
+  isEscapeSequence(key.sequence);
 const isEnter = (key: KeyboardKey) => key.name === "return" || key.name === "enter";
 const isBackspace = (key: KeyboardKey) => key.name === "backspace" || key.name === "delete";
 const isNextView = (key: KeyboardKey) => key.name === "tab" || (key.ctrl && key.name === "n");
@@ -57,6 +75,8 @@ const isNextRow = (key: KeyboardKey) => key.name === "down" || key.name === "j";
 const isPreviousRow = (key: KeyboardKey) => key.name === "up" || key.name === "k";
 const isHelpToggle = (key: KeyboardKey) =>
   key.name === "?" || (key.name === "/" && key.shift === true);
+const isThemePickerToggle = (key: KeyboardKey) =>
+  key.name === "t" && !key.ctrl && !key.meta && !key.shift;
 const logLevels: readonly LogLevelFilter[] = ["all", "error", "warn", "info", "system"];
 const arrowCodes = {
   A: "up",
@@ -173,7 +193,7 @@ export const keyboardKeyFromInputSequence = (sequence: string): KeyboardKey | nu
   // A lone ESC arrives as its own coalesced sequence (the stdin parser flushes
   // it on a short timeout), but the renderer doesn't always forward it to the
   // React keyboard hook. Catch it here so esc reliably closes overlays/modes.
-  if (sequence === "\x1b" || sequence === "\x1b\x1b") {
+  if (isEscapeSequence(sequence)) {
     return keyboardKey({ name: "escape", raw: sequence, sequence });
   }
 
@@ -189,6 +209,19 @@ export const keyboardKeyFromInputSequence = (sequence: string): KeyboardKey | nu
 
   const plainArrow = directionFromPlainArrowSequence(sequence);
   if (plainArrow) return keyboardKey({ name: plainArrow, raw: sequence, sequence });
+
+  if (sequence.length === 1) {
+    const codepoint = sequence.codePointAt(0) ?? 0;
+    if (codepoint >= 0x20 && codepoint !== 0x7f) {
+      return keyboardKey({
+        name: sequence,
+        raw: sequence,
+        sequence,
+        shift:
+          sequence.toLocaleUpperCase() === sequence && sequence.toLocaleLowerCase() !== sequence,
+      });
+    }
+  }
 
   return null;
 };
@@ -270,6 +303,66 @@ const clearSelection = (state: UiState): UiState => ({
   visualAnchorId: null,
   visualAnchorLineIndex: 0,
 });
+
+const closeThemePicker = (state: UiState): UiState => ({
+  ...state,
+  themePickerOpen: false,
+  themeFilterText: "",
+  themeScrollIndex: 0,
+});
+
+const openThemePicker = (state: UiState): UiState => ({
+  ...state,
+  filterMode: false,
+  helpOpen: false,
+  processPickerOpen: false,
+  themePickerOpen: true,
+  themeFilterText: "",
+  themeScrollIndex: 0,
+});
+
+const selectThemeFromRows = (state: UiState, rows: readonly UiState["themeName"][]) =>
+  rows.includes(state.themeName) ? state.themeName : (rows[0] ?? state.themeName);
+
+const scrollIndexForTheme = (
+  rows: readonly UiState["themeName"][],
+  themeName: UiState["themeName"],
+  listHeight: number,
+  currentScrollIndex: number,
+) => {
+  const maxScrollIndex = Math.max(0, rows.length - listHeight);
+  const selectedIndex = rows.indexOf(themeName);
+  if (selectedIndex < 0) return Math.min(currentScrollIndex, maxScrollIndex);
+  if (selectedIndex < currentScrollIndex) return selectedIndex;
+  if (selectedIndex >= currentScrollIndex + listHeight) {
+    return Math.min(maxScrollIndex, selectedIndex - listHeight + 1);
+  }
+  return Math.min(currentScrollIndex, maxScrollIndex);
+};
+
+const reduceThemeSearch = (state: UiState, query: string, listHeight: number): UiState => {
+  const rows = themeNamesMatching(query);
+  const themeName = selectThemeFromRows(state, rows);
+  return {
+    ...state,
+    themeFilterText: query,
+    themeName,
+    themeScrollIndex: scrollIndexForTheme(rows, themeName, listHeight, 0),
+  };
+};
+
+const reduceThemeSelection = (state: UiState, delta: number, listHeight: number): UiState => {
+  const rows = themeNamesMatching(state.themeFilterText);
+  if (rows.length === 0) return state;
+  const currentIndex = rows.indexOf(state.themeName);
+  const index = currentIndex >= 0 ? currentIndex : 0;
+  const themeName = rows[(index + rows.length + delta) % rows.length] ?? state.themeName;
+  return {
+    ...state,
+    themeName,
+    themeScrollIndex: scrollIndexForTheme(rows, themeName, listHeight, state.themeScrollIndex),
+  };
+};
 
 const hasSelection = (state: UiState) =>
   state.markedLogIds.length > 0 || state.visualAnchorId !== null;
@@ -505,6 +598,42 @@ export const reduceKeyboard = (
     return { state, command: noCommand };
   }
 
+  if (state.themePickerOpen) {
+    const listHeight = Math.max(1, context.themePickerListHeight);
+    if (key.ctrl && key.name === "c") {
+      return { state, command: { _tag: "quit" } };
+    }
+    if (isEscape(key)) {
+      return { state: closeThemePicker(state), command: noCommand };
+    }
+    if (isEnter(key)) {
+      return { state: closeThemePicker(state), command: noCommand };
+    }
+    const themeNext =
+      key.name === "down" || (state.themeFilterText.length === 0 && key.name === "j");
+    const themePrevious =
+      key.name === "up" || (state.themeFilterText.length === 0 && key.name === "k");
+    if (themeNext) {
+      return { state: reduceThemeSelection(state, 1, listHeight), command: noCommand };
+    }
+    if (themePrevious) {
+      return { state: reduceThemeSelection(state, -1, listHeight), command: noCommand };
+    }
+    if (isBackspace(key)) {
+      return {
+        state: reduceThemeSearch(state, state.themeFilterText.slice(0, -1), listHeight),
+        command: noCommand,
+      };
+    }
+    const printable = extractPrintable(key);
+    return printable
+      ? {
+          state: reduceThemeSearch(state, state.themeFilterText + printable, listHeight),
+          command: noCommand,
+        }
+      : { state, command: noCommand };
+  }
+
   if (state.processPickerOpen) {
     if (key.name === "q" || (key.ctrl && key.name === "c")) {
       return { state, command: { _tag: "quit" } };
@@ -553,6 +682,10 @@ export const reduceKeyboard = (
 
   if (isHelpToggle(key)) {
     return { state: { ...state, helpOpen: true }, command: noCommand };
+  }
+
+  if (isThemePickerToggle(key)) {
+    return { state: openThemePicker(state), command: noCommand };
   }
 
   const paneFocus = reducePaneFocus(key, state, context);

@@ -199,7 +199,7 @@ const buildScrollbar = (
 
 export const buildViewModel = (input: ViewModelInput): ViewModel => {
   const processPaneHeight = input.showProcessList
-    ? Math.min(input.height - 5, input.snapshot.processes.length + 2)
+    ? Math.min(input.height - 5, input.snapshot.processes.length + 4)
     : 0;
   const filterHeight = input.filterMode ? 1 : 0;
   // Header (2) + header rule (1) + status rule (1) + status bar (1) = 5, plus a
