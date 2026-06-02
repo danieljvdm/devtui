@@ -1,7 +1,7 @@
 import { bestProcessEndpoint, type LogEntry, type ProcessRuntime } from "../core/domain.ts";
 import { extractPrintable } from "../core/text.ts";
 import { themeNamesMatching } from "../theme.ts";
-import { resolveSelectedLogIds } from "./model.ts";
+import { logMatchesQuery, resolveSelectedLogIds } from "./model.ts";
 import type { LogLevelFilter, UiState, ViewId } from "./state.ts";
 
 export interface KeyboardKey {
@@ -508,6 +508,7 @@ const reduceQueryInput = (
   key: KeyboardKey,
   state: UiState,
   mode: "filter" | "search",
+  context: KeyboardContext,
 ): KeyboardResult | null => {
   const modeKey = mode === "filter" ? "filterMode" : "searchMode";
   const textKey = mode === "filter" ? "filterText" : "searchText";
@@ -528,7 +529,17 @@ const reduceQueryInput = (
     };
   }
   if (isEnter(key)) {
-    return { state: { ...state, [modeKey]: false }, command: noCommand };
+    const committed = { ...state, [modeKey]: false };
+    // Committing a search lands on the first hit so the current-match cursor and
+    // its `match 1 of N` counter are immediately live; n / N take it from there.
+    if (mode === "search") {
+      const first = searchMatchRowIndices(context.scroll, state.searchText)[0];
+      return {
+        state: first === undefined ? committed : focusRowCentered(committed, context.scroll, first),
+        command: noCommand,
+      };
+    }
+    return { state: committed, command: noCommand };
   }
   if (isBackspace(key)) {
     return {
@@ -656,6 +667,57 @@ const reduceLogCursor = (state: UiState, scroll: ScrollContext, deltaRows: numbe
   };
 };
 
+// Indices (into the scroll's visible rows) of the first row of every entry that
+// matches the search query — the hits `n` / `N` move between. Wrapped lines past
+// the first are skipped so each matching entry counts once, matching the
+// `match X of Y` total the view model derives from the entries themselves.
+const searchMatchRowIndices = (scroll: ScrollContext, query: string): readonly number[] => {
+  if (query.trim().length === 0) return [];
+  const indices: number[] = [];
+  scroll.visibleRows.forEach((row, index) => {
+    if (row.lineIndex === 0 && logMatchesQuery(row.log, query)) indices.push(index);
+  });
+  return indices;
+};
+
+// Move the cursor onto the row at `targetIndex`, centering it in the viewport so
+// a jump to a far-off hit lands in view. Mirrors reduceLogCursor's tail handling
+// so landing on the newest row resumes following.
+const focusRowCentered = (state: UiState, scroll: ScrollContext, targetIndex: number): UiState => {
+  const nextRow = scroll.visibleRows[targetIndex];
+  if (!nextRow) return state;
+  if (targetIndex >= scroll.visibleRows.length - 1) {
+    return resetLogScroll({ ...state, focusedPane: "logs" });
+  }
+  const desiredStart = Math.max(
+    0,
+    Math.min(scroll.maxStartIndex, targetIndex - Math.floor(scroll.paneHeight / 2)),
+  );
+  const anchorRow = scroll.visibleRows[desiredStart];
+  return {
+    ...state,
+    focusedPane: "logs",
+    logAnchorId: anchorRow?.log.id ?? null,
+    logAnchorLineIndex: anchorRow?.lineIndex ?? 0,
+    selectedLogId: nextRow.log.id,
+    selectedLogLineIndex: nextRow.lineIndex,
+  };
+};
+
+// Jump the cursor to the next (`direction > 0`) or previous search hit relative
+// to where it sits now, wrapping around the ends like vim's n / N.
+const jumpToSearchMatch = (state: UiState, scroll: ScrollContext, direction: 1 | -1): UiState => {
+  const matches = searchMatchRowIndices(scroll, state.searchText);
+  if (matches.length === 0) return state;
+  const rawCursor = cursorIndex(scroll, state);
+  const cursor = rawCursor < 0 ? scroll.visibleRows.length - 1 : rawCursor;
+  const target =
+    direction > 0
+      ? (matches.find((index) => index > cursor) ?? matches[0])
+      : ([...matches].reverse().find((index) => index < cursor) ?? matches[matches.length - 1]);
+  return focusRowCentered(state, scroll, target ?? matches[0] ?? 0);
+};
+
 export const reduceKeyboard = (
   key: KeyboardKey,
   state: UiState,
@@ -665,11 +727,11 @@ export const reduceKeyboard = (
   const scroll = context.scroll;
 
   if (state.filterMode) {
-    return reduceQueryInput(key, state, "filter") ?? { state, command: noCommand };
+    return reduceQueryInput(key, state, "filter", context) ?? { state, command: noCommand };
   }
 
   if (state.searchMode) {
-    return reduceQueryInput(key, state, "search") ?? { state, command: noCommand };
+    return reduceQueryInput(key, state, "search", context) ?? { state, command: noCommand };
   }
 
   if (state.helpOpen) {
@@ -783,18 +845,41 @@ export const reduceKeyboard = (
     if (hasSelection(state)) {
       return { state: clearSelection(state), command: noCommand };
     }
-    return {
-      state:
-        state.filterText || state.searchText || state.logLevel !== "all"
-          ? resetLogScroll({ ...state, filterText: "", searchText: "", logLevel: "all" })
-          : resetLogScroll({ ...state, viewId: "merged" }),
-      command: noCommand,
-    };
+    // Peel one layer at a time: an active search first (keeping the filter it
+    // runs inside), then the filter / level, then the per-process view.
+    if (state.searchText) {
+      return { state: resetLogScroll({ ...state, searchText: "" }), command: noCommand };
+    }
+    if (state.filterText || state.logLevel !== "all") {
+      return {
+        state: resetLogScroll({ ...state, filterText: "", logLevel: "all" }),
+        command: noCommand,
+      };
+    }
+    return { state: resetLogScroll({ ...state, viewId: "merged" }), command: noCommand };
   }
 
+  // n / N step between search hits (handles real uppercase `N`, which arrives as
+  // its own key name rather than n+shift). Only while a search is committed.
+  if (state.searchText && !key.ctrl && !key.meta) {
+    if (key.name === "n" && !key.shift) {
+      return { state: jumpToSearchMatch(state, scroll, 1), command: noCommand };
+    }
+    if (key.name === "N" || (key.name === "n" && key.shift)) {
+      return { state: jumpToSearchMatch(state, scroll, -1), command: noCommand };
+    }
+  }
+
+  // `f` inside a search "filters to the hits": promote the query to a filter and
+  // drop the search entirely (clearing its text) so it becomes a plain filter.
   if (state.searchText && key.name === "f" && !key.ctrl && !key.meta && !key.shift) {
     return {
-      state: resetLogScroll({ ...state, filterText: state.searchText, searchMode: false }),
+      state: resetLogScroll({
+        ...state,
+        filterText: state.searchText,
+        searchText: "",
+        searchMode: false,
+      }),
       command: noCommand,
     };
   }

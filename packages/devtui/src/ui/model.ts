@@ -1,6 +1,11 @@
 import type { LogEntry, ProcessRuntime, RunnerSnapshot } from "../core/domain.ts";
 import type { FocusedPane, LogLevelFilter } from "./state.ts";
 
+// A query bar (filter or search) is this many rows tall. The design's 4px padding
+// is sub-character, so the band is a single row at terminal resolution. Shared
+// with the QueryLine component.
+export const QUERY_BAR_HEIGHT = 1;
+
 export interface LogDisplayRow {
   readonly log: LogEntry;
   readonly lineIndex: number;
@@ -176,7 +181,7 @@ export const filterLogs = (
   });
 };
 
-const logMatchesQuery = (log: LogEntry, query: string) => {
+export const logMatchesQuery = (log: LogEntry, query: string) => {
   const lowerQuery = query.trim().toLowerCase();
   if (!lowerQuery) return false;
   return `${log.processName} ${log.stream} ${log.text}`.toLowerCase().includes(lowerQuery);
@@ -266,16 +271,19 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
   const processPaneHeight = input.showProcessList
     ? Math.min(input.height - 5, input.snapshot.processes.length + 4)
     : 0;
+  // Filter and search render as independent bottom bands (each QUERY_BAR_HEIGHT
+  // rows: text centered between padding) and can be on screen at the same time
+  // (search within an active filter).
+  const filterRowVisible = input.filterMode || input.filterText.length > 0;
+  const searchRowVisible = input.searchMode || input.searchText.length > 0;
+  const queryActive = filterRowVisible || searchRowVisible;
   const queryHeight =
-    input.filterMode ||
-    input.searchMode ||
-    input.filterText.length > 0 ||
-    input.searchText.length > 0
-      ? 1
-      : 0;
-  // Status rule (1) + status bar (1), plus a second rule under the top process
-  // list when it is shown.
-  const fixedChromeHeight = input.sideRail || !input.showProcessList ? 2 : 3;
+    (filterRowVisible ? QUERY_BAR_HEIGHT : 0) + (searchRowVisible ? QUERY_BAR_HEIGHT : 0);
+  // Status bar (1) + the rule above it, plus a second rule under the top process
+  // list when shown. An active query band abuts the status bar directly, so the
+  // rule above the status bar is dropped — the band itself is the separator.
+  const baseChromeHeight = input.sideRail || !input.showProcessList ? 2 : 3;
+  const fixedChromeHeight = queryActive ? baseChromeHeight - 1 : baseChromeHeight;
   const logPaneHeight = Math.max(
     1,
     input.height - processPaneHeight - queryHeight - fixedChromeHeight,

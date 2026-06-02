@@ -415,16 +415,36 @@ describe("reduceKeyboard help and restart", () => {
     expect(openedFilter.state.searchMode).toBe(false);
   });
 
-  test("escape clears active search and filter state", () => {
+  test("escape peels the search first, then the filter and level", () => {
+    const combined = {
+      ...state,
+      searchText: "tasks",
+      filterText: "api",
+      logLevel: "warn" as const,
+    };
+    const first = reduceKeyboard(key({ name: "escape" }), combined, processes, context);
+    // The search runs inside the filter, so the first escape clears only the
+    // search and leaves the filter (and level) intact.
+    expect(first.state.searchText).toBe("");
+    expect(first.state.filterText).toBe("api");
+    expect(first.state.logLevel).toBe("warn");
+    // A second escape then clears the filter and resets the level.
+    const second = reduceKeyboard(key({ name: "escape" }), first.state, processes, context);
+    expect(second.state.filterText).toBe("");
+    expect(second.state.logLevel).toBe("all");
+  });
+
+  test("f inside a search filters to the hits and clears the search", () => {
     const result = reduceKeyboard(
-      key({ name: "escape" }),
-      { ...state, searchText: "tasks", filterText: "api", logLevel: "warn" },
+      key({ name: "f" }),
+      { ...state, searchText: "tasks" },
       processes,
       context,
     );
+    expect(result.state.filterText).toBe("tasks");
     expect(result.state.searchText).toBe("");
-    expect(result.state.filterText).toBe("");
-    expect(result.state.logLevel).toBe("all");
+    expect(result.state.searchMode).toBe(false);
+    expect(result.state.filterMode).toBe(false);
   });
 
   test("theme selector previews themes with j/k and closes on enter", () => {
@@ -525,5 +545,64 @@ describe("keyboardKeyFromInputSequence escape", () => {
 
   test("does not mistake an arrow sequence for escape", () => {
     expect(keyboardKeyFromInputSequence("\x1b[D")!.name).toBe("left");
+  });
+});
+
+describe("reduceKeyboard search navigation", () => {
+  const rows = [
+    { id: 1, text: "worker: handled /api/users" },
+    { id: 2, text: "worker: handled /api/tasks" }, // match (index 1)
+    { id: 3, text: "worker: handled /assets/app.js" },
+    { id: 4, text: "worker: handled /api/tasks again" }, // match (index 3)
+    { id: 5, text: "worker: done" },
+  ].map(({ id, text }) => ({
+    log: {
+      id,
+      processId: "worker",
+      processName: "worker",
+      stream: "stdout" as const,
+      severity: "info" as const,
+      text,
+      timestampMs: id,
+    },
+    lineIndex: 0,
+  }));
+  const searchContext: KeyboardContext = {
+    ...context,
+    scroll: { visibleRows: rows, startIndex: 0, maxStartIndex: 0, paneHeight: rows.length },
+  };
+
+  test("committing a search jumps the cursor to the first hit", () => {
+    const result = reduceKeyboard(
+      key({ name: "enter" }),
+      { ...state, searchMode: true, searchText: "tasks" },
+      processes,
+      searchContext,
+    );
+    expect(result.state.searchMode).toBe(false);
+    expect(result.state.selectedLogId).toBe(2);
+  });
+
+  test("n / N step forward and back through hits, wrapping at the ends", () => {
+    const onFirst = { ...state, searchText: "tasks", selectedLogId: 2, selectedLogLineIndex: 0 };
+    const next = reduceKeyboard(key({ name: "n" }), onFirst, processes, searchContext);
+    expect(next.state.selectedLogId).toBe(4);
+
+    const prev = reduceKeyboard(
+      key({ name: "N", shift: true }),
+      next.state,
+      processes,
+      searchContext,
+    );
+    expect(prev.state.selectedLogId).toBe(2);
+
+    // n from the last hit wraps back to the first
+    const wrapped = reduceKeyboard(
+      key({ name: "n" }),
+      { ...state, searchText: "tasks", selectedLogId: 4, selectedLogLineIndex: 0 },
+      processes,
+      searchContext,
+    );
+    expect(wrapped.state.selectedLogId).toBe(2);
   });
 });

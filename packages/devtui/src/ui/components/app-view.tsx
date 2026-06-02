@@ -41,6 +41,17 @@ export const AppView = ({
   readonly onLogScroll: (event: MouseEvent) => void;
 }) => {
   const logPaneWidth = Math.max(1, width - layout.processRailWidth - 1);
+  const searchActive = uiState.searchText.trim().length > 0;
+  const filterActive = uiState.filterText.trim().length > 0;
+  // Whether a filter/search band is on screen (matches QueryLine's own visibility
+  // and the view model's query-height reservation).
+  const queryActive =
+    uiState.filterMode ||
+    uiState.filterText.length > 0 ||
+    uiState.searchMode ||
+    uiState.searchText.length > 0;
+  // Search highlighting takes the stage when active (it tracks a moving cursor);
+  // otherwise the filter term is highlighted in place.
   const highlightQuery = uiState.searchText || uiState.filterText;
 
   return (
@@ -80,6 +91,8 @@ export const AppView = ({
                 selectedLogIds={view.selectedLogIds}
                 copyFlash={copyFlash}
                 highlightQuery={highlightQuery}
+                searchActive={searchActive}
+                filterActive={filterActive}
                 onScroll={onLogScroll}
               />
             )}
@@ -118,11 +131,18 @@ export const AppView = ({
               selectedLogIds={view.selectedLogIds}
               copyFlash={copyFlash}
               highlightQuery={highlightQuery}
+              searchActive={searchActive}
+              filterActive={filterActive}
               onScroll={onLogScroll}
             />
           )}
         </>
       )}
+      {/* With no query, a rule separates the logs from the status bar. With a
+          query active the filter/search bands take that slot: each is a tinted
+          block that abuts the logs above and the status bar below, flush, with
+          its text centered — matching the design (no heavy divider between). */}
+      {queryActive ? null : <Divider width={width} solid />}
       <QueryLine
         filterMode={uiState.filterMode}
         filterText={uiState.filterText}
@@ -134,7 +154,6 @@ export const AppView = ({
         selectedSearchMatchIndex={view.selectedSearchMatchIndex}
         width={width}
       />
-      <Divider width={width} solid />
       <StatusBar
         width={width}
         view={view}

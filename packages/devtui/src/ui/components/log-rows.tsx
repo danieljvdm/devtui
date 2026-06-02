@@ -100,11 +100,17 @@ const HighlightedText = ({
   query,
   fallbackColor,
   selected,
+  matchBg,
+  currentMatchBg,
 }: {
   readonly text: string;
   readonly query: string;
   readonly fallbackColor: string;
   readonly selected: boolean;
+  // The fill behind a match. `currentMatchBg` applies on the cursor row (the
+  // "current" hit a search lands on); `matchBg` to every other match.
+  readonly matchBg: string;
+  readonly currentMatchBg: string;
 }) => {
   const needle = query.trim();
   if (!needle) return <span fg={fallbackColor}>{text}</span>;
@@ -122,11 +128,7 @@ const HighlightedText = ({
       );
     }
     spans.push(
-      <span
-        key={`hit-${matchIndex}`}
-        fg={selected ? colors.screenBg : colors.yellow}
-        attributes={TextAttributes.INVERSE}
-      >
+      <span key={`hit-${matchIndex}`} fg={colors.screenBg} bg={selected ? currentMatchBg : matchBg}>
         {text.slice(matchIndex, matchIndex + needle.length)}
       </span>,
     );
@@ -155,6 +157,8 @@ export const LogRows = ({
   selectedLogIds,
   copyFlash,
   highlightQuery,
+  searchActive,
+  filterActive,
   onScroll,
 }: {
   readonly rows: readonly LogDisplayRow[];
@@ -168,8 +172,16 @@ export const LogRows = ({
   readonly selectedLogIds: ReadonlySet<number>;
   readonly copyFlash: CopyFlash | null;
   readonly highlightQuery: string;
+  readonly searchActive: boolean;
+  readonly filterActive: boolean;
   readonly onScroll: (event: MouseEvent) => void;
 }) => {
+  // Filter matches read amber. Search hits read amber too when search stands
+  // alone, but switch to the accent so they stay distinct from the amber filter
+  // when a search runs inside a filter. The current hit (on the cursor row) is
+  // always the accent — that's the match `n` / `N` move between.
+  const matchBg = searchActive && filterActive ? colors.accent : colors.yellow;
+  const currentMatchBg = searchActive ? colors.accent : colors.yellow;
   const visibleRows = rows.slice(0, Math.max(0, height));
   const hasScrollbar = scrollbar !== null;
   const logPaneWidth = hasScrollbar ? Math.max(1, width - 1) : width;
@@ -260,6 +272,8 @@ export const LogRows = ({
                         query={highlightQuery}
                         fallbackColor={color}
                         selected={highlighted}
+                        matchBg={matchBg}
+                        currentMatchBg={currentMatchBg}
                       />
                     ))
                   : segments.map((segment, segmentIndex) => (
