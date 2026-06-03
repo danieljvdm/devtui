@@ -96,6 +96,17 @@ const isHelpToggle = (key: KeyboardKey) =>
   key.name === "?" || (key.name === "/" && key.shift === true);
 const isThemePickerToggle = (key: KeyboardKey) =>
   key.name === "t" && !key.ctrl && !key.meta && !key.shift;
+const isVisualLineKey = (key: KeyboardKey) =>
+  !key.ctrl && !key.meta && (key.name === "V" || (key.name === "v" && key.shift === true));
+const isLogLevelKey = (key: KeyboardKey) =>
+  !key.ctrl && !key.meta && (key.name === "L" || (key.name === "l" && key.shift === true));
+const isRestartAllKey = (key: KeyboardKey) =>
+  !key.ctrl && !key.meta && (key.name === "R" || (key.name === "r" && key.shift === true));
+const isClearLogsKey = (key: KeyboardKey) =>
+  !key.ctrl && !key.meta && (key.name === "C" || (key.name === "c" && key.shift === true));
+const isEndKey = (key: KeyboardKey) =>
+  key.name === "end" ||
+  (!key.ctrl && !key.meta && (key.name === "G" || (key.name === "g" && key.shift === true)));
 const logLevels: readonly LogLevelFilter[] = ["all", "error", "warn", "info", "system"];
 const arrowCodes = {
   A: "up",
@@ -126,6 +137,7 @@ type PaneKey = "h" | "j" | "k" | "l";
 const hasCtrlModifier = (modifier: number) => ((modifier - 1) & 4) !== 0;
 
 const normalizeSequence = (sequence: string) => sequence.replaceAll("\u009b", "\x1b[");
+const bareCursorPositionReplyPattern = /^\d{1,3};\d{1,3}R?$/;
 
 const keyboardKey = (input: Partial<KeyboardKey>): KeyboardKey => ({
   name: "",
@@ -254,6 +266,7 @@ export const keyboardKeysFromInputSequence = (sequence: string): readonly Keyboa
   const key = keyboardKeyFromInputSequence(sequence);
   if (key) return [key];
   if (sequence.includes("\x1b")) return [];
+  if (bareCursorPositionReplyPattern.test(sequence)) return [];
   return Array.from(sequence).flatMap((character) => {
     const parsed = keyboardKeyFromInputSequence(character);
     return parsed ? [parsed] : [];
@@ -888,7 +901,7 @@ export const reduceKeyboard = (
     return { state: { ...state, filterMode: true, searchMode: false }, command: noCommand };
   }
 
-  if (key.name === "l" && key.shift) {
+  if (isLogLevelKey(key)) {
     return {
       state: resetLogScroll({ ...state, logLevel: nextLogLevel(state.logLevel) }),
       command: noCommand,
@@ -926,7 +939,7 @@ export const reduceKeyboard = (
       };
     }
 
-    if (key.name === "v" && key.shift) {
+    if (isVisualLineKey(key)) {
       if (state.visualAnchorId !== null) {
         return {
           state: { ...state, visualAnchorId: null, visualAnchorLineIndex: 0 },
@@ -999,7 +1012,7 @@ export const reduceKeyboard = (
       : { state, command: noCommand };
   }
 
-  if (key.name === "r" && key.shift) {
+  if (isRestartAllKey(key)) {
     return { state: resetLogScroll(state), command: { _tag: "restartAll" } };
   }
 
@@ -1016,7 +1029,7 @@ export const reduceKeyboard = (
     return { state, command: { _tag: "stopProcess", id: state.viewId } };
   }
 
-  if (key.name === "c" && key.shift) {
+  if (isClearLogsKey(key)) {
     return { state: resetLogScroll(state), command: { _tag: "clearLogs" } };
   }
 
@@ -1048,7 +1061,7 @@ export const reduceKeyboard = (
     };
   }
 
-  if (key.name === "end" || (key.name === "g" && key.shift)) {
+  if (isEndKey(key)) {
     return { state: resetLogScroll(state), command: noCommand };
   }
 

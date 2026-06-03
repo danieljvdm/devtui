@@ -277,13 +277,37 @@ describe("reduceKeyboard log selection", () => {
 
   test("V enters visual mode anchored on the cursor entry", () => {
     const ctx = rowsContext([1, 2, 3]);
+    const visualLineKey = keyboardKeyFromInputSequence("V");
+    expect(visualLineKey).not.toBeNull();
     const result = reduceKeyboard(
-      key({ name: "v", shift: true }),
+      visualLineKey!,
       { ...state, selectedLogId: 2, selectedLogLineIndex: 0 },
       processes,
       ctx,
     );
     expect(result.state.visualAnchorId).toBe(2);
+  });
+
+  test("V, movement, y yanks the inclusive visual range", () => {
+    const ctx = rowsContext([1, 2, 3, 4]);
+    const visualLineKey = keyboardKeyFromInputSequence("V");
+    const downKey = keyboardKeyFromInputSequence("j");
+    const yankKey = keyboardKeyFromInputSequence("y");
+    expect(visualLineKey).not.toBeNull();
+    expect(downKey).not.toBeNull();
+    expect(yankKey).not.toBeNull();
+
+    const visual = reduceKeyboard(
+      visualLineKey!,
+      { ...state, selectedLogId: 2, selectedLogLineIndex: 0 },
+      processes,
+      ctx,
+    );
+    const moved = reduceKeyboard(downKey!, visual.state, processes, ctx);
+    const yanked = reduceKeyboard(yankKey!, moved.state, processes, ctx);
+
+    expect(yanked.command).toMatchObject({ _tag: "copyText", logIds: [2, 3] });
+    expect(yanked.state.visualAnchorId).toBeNull();
   });
 
   test("escape clears an active selection before any other escape behaviour", () => {
@@ -375,13 +399,12 @@ describe("reduceKeyboard help and restart", () => {
     expect(result.command._tag).toBe("none");
   });
 
-  test("shift+r restarts every process", () => {
-    const result = reduceKeyboard(
-      key({ name: "r", shift: true }),
-      { ...state, viewId: "api" },
-      processes,
-      context,
-    );
+  test("R restarts every process", () => {
+    const restartAllKey = keyboardKeyFromInputSequence("R");
+    expect(restartAllKey).not.toBeNull();
+
+    const result = reduceKeyboard(restartAllKey!, { ...state, viewId: "api" }, processes, context);
+
     expect(result.command).toEqual({ _tag: "restartAll" });
   });
 
@@ -432,6 +455,25 @@ describe("reduceKeyboard help and restart", () => {
     const second = reduceKeyboard(key({ name: "escape" }), first.state, processes, context);
     expect(second.state.filterText).toBe("");
     expect(second.state.logLevel).toBe("all");
+  });
+
+  test("L cycles the log level filter", () => {
+    const levelKey = keyboardKeyFromInputSequence("L");
+    expect(levelKey).not.toBeNull();
+
+    const result = reduceKeyboard(levelKey!, state, processes, context);
+
+    expect(result.state.logLevel).toBe("error");
+    expect(result.command._tag).toBe("none");
+  });
+
+  test("C clears logs", () => {
+    const clearLogsKey = keyboardKeyFromInputSequence("C");
+    expect(clearLogsKey).not.toBeNull();
+
+    const result = reduceKeyboard(clearLogsKey!, state, processes, context);
+
+    expect(result.command).toEqual({ _tag: "clearLogs" });
   });
 
   test("f inside a search filters to the hits and clears the search", () => {
@@ -505,6 +547,10 @@ describe("keyboardKeyFromInputSequence escape", () => {
   test("recognizes esc coalesced with terminal responses", () => {
     expect(keyboardKeyFromInputSequence("\x1b\x1b]10;rgb:c0c0/caca/f5f5\x07")?.name).toBe("escape");
     expect(keyboardKeyFromInputSequence("\x1b\x1b[?997;1n")?.name).toBe("escape");
+  });
+
+  test("drops cursor-position replies that arrive without their escape prefix", () => {
+    expect(keyboardKeysFromInputSequence("77;214")).toEqual([]);
   });
 
   test("raw kitty escape cancels filter mode and clears the query", () => {
@@ -604,5 +650,27 @@ describe("reduceKeyboard search navigation", () => {
       searchContext,
     );
     expect(wrapped.state.selectedLogId).toBe(2);
+  });
+
+  test("G jumps back to the newest logs", () => {
+    const endKey = keyboardKeyFromInputSequence("G");
+    expect(endKey).not.toBeNull();
+
+    const result = reduceKeyboard(
+      endKey!,
+      {
+        ...state,
+        logAnchorId: 2,
+        logAnchorLineIndex: 0,
+        selectedLogId: 2,
+        selectedLogLineIndex: 0,
+      },
+      processes,
+      searchContext,
+    );
+
+    expect(result.state.logAnchorId).toBeNull();
+    expect(result.state.selectedLogId).toBeNull();
+    expect(result.command._tag).toBe("none");
   });
 });
