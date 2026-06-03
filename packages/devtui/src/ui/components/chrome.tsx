@@ -1,4 +1,3 @@
-import { TextAttributes } from "@opentui/core";
 import { colors } from "../../theme.ts";
 
 export const clamp = (value: number, min: number, max: number) =>
@@ -11,9 +10,9 @@ export type Hint = readonly [key: string, label: string];
 export const hintSpans = (hints: readonly Hint[]) =>
   hints.flatMap(([key, label], index) => [
     <span key={`gap-${index}`} fg={colors.separator}>
-      {index === 0 ? "" : "   "}
+      {index === 0 ? "" : "  "}
     </span>,
-    <span key={`key-${index}`} fg={colors.green} attributes={TextAttributes.BOLD}>
+    <span key={`key-${index}`} fg={colors.green}>
       {key}
     </span>,
     <span key={`label-${index}`} fg={colors.muted}>
@@ -27,7 +26,7 @@ export const modalHintSpans = (hints: readonly Hint[]) =>
     <span key={`gap-${index}`} fg={colors.separator}>
       {index === 0 ? "" : "  "}
     </span>,
-    <span key={`key-${index}`} fg={colors.green} attributes={TextAttributes.BOLD}>
+    <span key={`key-${index}`} fg={colors.green}>
       {key}
     </span>,
     <span key={`label-${index}`} fg={colors.muted}>

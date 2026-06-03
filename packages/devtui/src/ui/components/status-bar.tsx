@@ -26,15 +26,14 @@ const footerHintsFor = (view: ViewModel, crashed: boolean): readonly Hint[] =>
           ["C", "clear"],
           ["/", "search"],
           ["f", "filter"],
-          ["t", "theme"],
           ["h/l", "focus"],
+          ["?", "help"],
           ["q", "quit"],
         ];
 
 export const StatusBar = ({
   width,
   view,
-  themeName,
   activeProcess,
   crashed,
   logLevel,
@@ -43,7 +42,6 @@ export const StatusBar = ({
 }: {
   readonly width: number;
   readonly view: ViewModel;
-  readonly themeName: string;
   readonly activeProcess: ProcessRuntime | undefined;
   readonly crashed: boolean;
   readonly logLevel: LogLevelFilter;
@@ -52,18 +50,9 @@ export const StatusBar = ({
 }) => (
   <box height={1} flexDirection="row" paddingLeft={1} paddingRight={1}>
     <text wrapMode="none" truncate>
-      <span fg={colors.dim}>{view.focusedPane}</span>
-      <span fg={colors.separator}>{"  "}</span>
-      <span fg={colors.dim}>theme </span>
-      <span fg={colors.muted}>{themeName}</span>
-      <span fg={colors.separator}>{"  "}</span>
-      <span fg={view.isFollowing ? colors.green : colors.muted}>
-        {view.isFollowing
-          ? "following"
-          : `paused ${view.scrollStartIndex + 1}-${view.scrollEndIndex}/${view.displayRowCount}`}
+      <span fg={view.isFollowing ? colors.green : colors.dim}>
+        {view.isFollowing ? "following" : "paused"}
       </span>
-      <span fg={colors.separator}>{"  "}</span>
-      <span fg={colors.text}>{view.activeLabel}</span>
       {crashed && activeProcess ? (
         <>
           <span fg={colors.separator}>{"  "}</span>
@@ -82,8 +71,8 @@ export const StatusBar = ({
       ) : (
         <>
           <span fg={colors.separator}>{"  "}</span>
-          <span fg={colors.dim}>level </span>
-          <span fg={colors.muted}>{logLevel}</span>
+          <span fg={colors.green}>L</span>
+          <span fg={colors.dim}> level {logLevel}</span>
         </>
       )}
     </text>

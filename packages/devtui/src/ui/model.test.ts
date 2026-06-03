@@ -55,13 +55,13 @@ const build = (
     focusedPane: "logs",
     height: 8,
     logWidth: 31,
-    nameColWidth: 8,
     ...overrides,
   });
 
 describe("buildViewModel log wrapping", () => {
   test("wraps long logs into visual rows", () => {
-    const view = build([log({ id: 1, text: "abcdefghijkl" })]);
+    // logWidth 20 − gutter 13 − 2 = a 5-column message area, so the text wraps.
+    const view = build([log({ id: 1, text: "abcdefghijkl" })], { logWidth: 20 });
 
     expect(view.logRows.map((row) => row.text)).toEqual(["abcde", "fghij", "kl"]);
     expect(view.scrollRows.map((row) => [row.log.id, row.lineIndex, row.totalLines])).toEqual([
@@ -74,6 +74,7 @@ describe("buildViewModel log wrapping", () => {
   test("anchors scrolling to a visual row inside a wrapped log", () => {
     const view = build([log({ id: 1, text: "abcdefghijklmnop" })], {
       height: 4,
+      logWidth: 20,
       logAnchorId: 1,
       logAnchorLineIndex: 1,
     });

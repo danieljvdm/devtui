@@ -3,7 +3,7 @@ import type { ProcessRuntime } from "../../core/domain.ts";
 import { pad } from "../../core/text.ts";
 import { colors, rgba } from "../../theme.ts";
 import { leftPad, statusColor, statusDot } from "../process-status.ts";
-import { Divider, hintSpans } from "./chrome.tsx";
+import { hintSpans } from "./chrome.tsx";
 
 export const ProcessList = ({
   processes,
@@ -25,25 +25,28 @@ export const ProcessList = ({
   );
   const nameWidth = Math.max(1, Math.min(naturalNameWidth, textWidth - indexWidth - 5));
   const mergedSelected = viewId === "merged";
+  // The merged row is a true aggregate of its children, mirroring the design's
+  // roll-up so the master dot reflects fleet health: all up → green ●; nothing
+  // up yet but spinning → dim ●; a crash → red ✗; partly up (no crash) → amber ●
+  // (transitional); otherwise (all stopped) → violet ●.
   const runningCount = processes.filter((process) => process.status === "running").length;
-  const mergedStatus =
-    runningCount > 0
-      ? "running"
-      : processes.some((process) => process.status === "starting")
-        ? "starting"
-        : "stopped";
+  const anyStarting = processes.some((process) => process.status === "starting");
+  const anyCrashed = processes.some(
+    (process) => process.status === "exited" || process.status === "failed",
+  );
+  const mergedDot =
+    processes.length > 0 && runningCount === processes.length
+      ? { color: colors.green, glyph: "●" }
+      : runningCount === 0 && anyStarting
+        ? { color: colors.dim, glyph: "●" }
+        : anyCrashed
+          ? { color: colors.red, glyph: "✗" }
+          : runningCount > 0
+            ? { color: colors.yellow, glyph: "●" }
+            : { color: colors.violet, glyph: "●" };
 
   return (
     <box flexDirection="column" width={width}>
-      <box height={1} paddingLeft={1} paddingRight={1}>
-        <text wrapMode="none" truncate>
-          <span fg={colors.dim}>
-            {"  "}
-            {leftPad("#", indexWidth)} ● {pad("name", nameWidth)}
-          </span>
-        </text>
-      </box>
-      <Divider width={width} solid />
       <box
         height={1}
         paddingLeft={1}
@@ -51,11 +54,9 @@ export const ProcessList = ({
         backgroundColor={mergedSelected ? rgba(colors.selectedBg) : undefined}
       >
         <text wrapMode="none" truncate>
-          <span fg={mergedSelected ? colors.accent : colors.muted}>
-            {mergedSelected ? "> " : "  "}
-            {"Σ".padStart(indexWidth)}{" "}
-          </span>
-          <span fg={statusColor(mergedStatus)}>{statusDot(mergedStatus)} </span>
+          <span fg={colors.accent}>{mergedSelected ? "> " : "  "}</span>
+          <span fg={colors.dim}>{"∑".padStart(indexWidth)} </span>
+          <span fg={mergedDot.color}>{mergedDot.glyph} </span>
           <span
             fg={mergedSelected ? colors.selectedText : colors.text}
             attributes={TextAttributes.BOLD}
@@ -75,10 +76,8 @@ export const ProcessList = ({
             backgroundColor={selected ? rgba(colors.selectedBg) : undefined}
           >
             <text wrapMode="none" truncate>
-              <span fg={selected ? colors.accent : colors.muted}>
-                {selected ? "> " : "  "}
-                {leftPad(String(index + 1), indexWidth)}{" "}
-              </span>
+              <span fg={colors.accent}>{selected ? "> " : "  "}</span>
+              <span fg={colors.dim}>{leftPad(String(index + 1), indexWidth)} </span>
               <span fg={statusColor(process.status)}>{statusDot(process.status)} </span>
               <span fg={selected ? colors.selectedText : colors.text}>
                 {pad(process.spec.name, nameWidth)}
@@ -97,7 +96,7 @@ export const ProcessList = ({
               ["/", "search"],
               ["f", "filter"],
               ["L", "level"],
-              ["t", "theme"],
+              ["?", "help"],
             ])}
           </text>
         </box>

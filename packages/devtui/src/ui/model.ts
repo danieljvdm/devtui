@@ -30,7 +30,6 @@ export interface ViewModelInput {
   readonly focusedPane: FocusedPane;
   readonly height: number;
   readonly logWidth: number;
-  readonly nameColWidth: number;
   readonly markedLogIds: readonly number[];
   readonly visualAnchorId: number | null;
   readonly visualAnchorLineIndex: number;
@@ -213,16 +212,16 @@ const indexForAnchor = (
 };
 
 export const LOG_TIME_WIDTH = "00:00:00".length;
-export const LOG_STREAM_WIDTH = 3;
 export const LOG_DIVIDER = " │ ";
 
 /**
  * Width of the metadata gutter that precedes a log message:
- * `HH:MM:SS <name> lvl │ `. Kept in one place so the renderer and the
- * wrap calculation never drift apart.
+ * `HH:MM:SS <marker> │ ` — timestamp (8) + a one-cell pad + the one-cell error
+ * marker + the divider. Fixed regardless of process count, so the message
+ * column starts in the same place on every screen. Kept in one place so the
+ * renderer and the wrap calculation never drift apart.
  */
-export const logMetaWidth = (nameColWidth: number) =>
-  LOG_TIME_WIDTH + 1 + nameColWidth + 1 + LOG_STREAM_WIDTH + LOG_DIVIDER.length;
+export const logMetaWidth = LOG_TIME_WIDTH + 1 + 1 + LOG_DIVIDER.length;
 
 const wrapText = (text: string, width: number) => {
   if (width <= 0) return [""];
@@ -236,9 +235,8 @@ const wrapText = (text: string, width: number) => {
 const buildDisplayRows = (
   logs: readonly LogEntry[],
   logPaneWidth: number,
-  nameColWidth: number,
 ): readonly LogDisplayRow[] => {
-  const textWidth = Math.max(1, logPaneWidth - logMetaWidth(nameColWidth) - 2);
+  const textWidth = Math.max(1, logPaneWidth - logMetaWidth - 2);
   return logs.flatMap((log) => {
     const textRows = wrapText(log.text, textWidth);
     return textRows.map((text, lineIndex) => ({
@@ -301,10 +299,10 @@ export const buildViewModel = (input: ViewModelInput): ViewModel => {
     input.searchText.trim().length === 0
       ? []
       : visibleLogs.filter((log) => logMatchesQuery(log, input.searchText));
-  const unconstrainedRows = buildDisplayRows(visibleLogs, input.logWidth, input.nameColWidth);
+  const unconstrainedRows = buildDisplayRows(visibleLogs, input.logWidth);
   const hasScrollbar = unconstrainedRows.length > logPaneHeight;
   const displayRows = hasScrollbar
-    ? buildDisplayRows(visibleLogs, Math.max(1, input.logWidth - 1), input.nameColWidth)
+    ? buildDisplayRows(visibleLogs, Math.max(1, input.logWidth - 1))
     : unconstrainedRows;
   const maxScrollStartIndex = Math.max(0, displayRows.length - logPaneHeight);
   const scrollStartIndex =

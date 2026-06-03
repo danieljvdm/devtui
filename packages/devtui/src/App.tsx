@@ -21,7 +21,7 @@ import {
   type UiCommand,
 } from "./ui/keyboard.ts";
 import { buildLayoutModel, buildViewModel } from "./ui/model.ts";
-import { isCrashed, nameColumnWidth } from "./ui/process-status.ts";
+import { isCrashed } from "./ui/process-status.ts";
 import {
   focusedPaneAtom,
   filterModeAtom,
@@ -185,7 +185,6 @@ export const App = ({
   );
 
   const layout = buildLayoutModel(width, height, snapshot.processes);
-  const nameColWidth = nameColumnWidth(snapshot.processes);
   const uiState: UiState = {
     viewId,
     focusedPane,
@@ -226,7 +225,6 @@ export const App = ({
     focusedPane,
     height,
     logWidth: layout.logPaneWidth,
-    nameColWidth,
     markedLogIds,
     visualAnchorId,
     visualAnchorLineIndex,
@@ -349,7 +347,6 @@ export const App = ({
       layout={layout}
       view={view}
       uiState={uiState}
-      nameColWidth={nameColWidth}
       copyFlash={copyFlash}
       copyNotice={copyNotice}
       quitArmed={quitArmed}

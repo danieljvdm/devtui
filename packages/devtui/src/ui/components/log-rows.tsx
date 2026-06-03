@@ -1,21 +1,23 @@
 import { TextAttributes, type MouseEvent } from "@opentui/core";
 import type { ReactNode } from "react";
 import type { LogEntry } from "../../core/domain.ts";
-import { formatTime, pad } from "../../core/text.ts";
+import { formatTime } from "../../core/text.ts";
 import { colors, rgba } from "../../theme.ts";
 import { parseAnsiWrappedLines } from "../ansi.ts";
 import {
   logMetaWidth,
   LOG_DIVIDER,
-  LOG_STREAM_WIDTH,
   LOG_TIME_WIDTH,
   type LogDisplayRow,
   type ScrollbarModel,
 } from "../model.ts";
 
-// The dim metadata gutter (`HH:MM:SS  name  lvl │`) shown to the left of every
-// log message. Continuation rows blank the metadata but keep the divider so
-// wrapped text stays visually attached to its entry.
+// The dim metadata gutter (`HH:MM:SS ✗ │`) shown to the left of every log
+// message: just the timestamp and a one-cell error marker (a red ✗ on error
+// lines, blank otherwise) — severity is otherwise carried by the message color,
+// and the process name lives in the sidebar (and the message's own prefix).
+// Continuation rows blank the metadata but keep the divider so wrapped text
+// stays visually attached to its entry.
 type DividerStyle = "normal" | "selected" | "copied";
 
 // Transient highlight shown on the log rows right after their text is copied.
@@ -38,12 +40,6 @@ const logColor = (log: LogEntry) => {
   }
 };
 
-const logStreamLabel = (log: LogEntry) =>
-  log.stream === "stderr" ? "err" : log.stream === "system" ? "sys" : "out";
-
-const streamColor = (log: LogEntry) =>
-  log.stream === "stderr" ? colors.red : log.stream === "system" ? colors.violet : colors.muted;
-
 // The 3-column divider between metadata and message doubles as a status glyph,
 // all the same width as " │ " so nothing reflows: a green check on a just-copied
 // entry, an accent bar on a selected/marked one, otherwise the dim separator.
@@ -65,19 +61,21 @@ const DividerGlyph = ({ style }: { readonly style: DividerStyle }) => {
 
 const LogMeta = ({
   log,
-  nameWidth,
   continuation,
   dividerStyle,
+  highlighted,
 }: {
   readonly log: LogEntry;
-  readonly nameWidth: number;
   readonly continuation: boolean;
   readonly dividerStyle: DividerStyle;
+  // The cursor/selected row lifts its timestamp from dim to the bright text
+  // color, matching the design's `.t-line.cur .gut .tm` rule.
+  readonly highlighted: boolean;
 }) => {
   if (continuation) {
-    const blank = " ".repeat(LOG_TIME_WIDTH + 1 + nameWidth + 1 + LOG_STREAM_WIDTH);
-    // The check only marks the first row of an entry; wrapped rows fall back to
-    // the plain divider (or the selected bar when the entry is selected).
+    // Blank the timestamp (8) + marker pad (1) + marker cell (1), then keep the
+    // divider so wrapped rows stay attached to their entry.
+    const blank = " ".repeat(LOG_TIME_WIDTH + 1 + 1);
     return (
       <>
         <span fg={colors.dim}>{blank}</span>
@@ -87,9 +85,12 @@ const LogMeta = ({
   }
   return (
     <>
-      <span fg={colors.dim}>{formatTime(log.timestampMs)} </span>
-      <span fg={colors.muted}>{pad(log.processName, nameWidth)} </span>
-      <span fg={streamColor(log)}>{logStreamLabel(log)}</span>
+      <span fg={highlighted ? colors.selectedText : colors.dim}>
+        {formatTime(log.timestampMs)}{" "}
+      </span>
+      <span fg={colors.red} attributes={TextAttributes.BOLD}>
+        {log.severity === "error" ? "✗" : " "}
+      </span>
       <DividerGlyph style={dividerStyle} />
     </>
   );
@@ -99,18 +100,18 @@ const HighlightedText = ({
   text,
   query,
   fallbackColor,
-  selected,
+  current,
   matchBg,
-  currentMatchBg,
 }: {
   readonly text: string;
   readonly query: string;
   readonly fallbackColor: string;
-  readonly selected: boolean;
-  // The fill behind a match. `currentMatchBg` applies on the cursor row (the
-  // "current" hit a search lands on); `matchBg` to every other match.
+  // True only on the single search-cursor row, so the current-match treatment
+  // never bleeds onto a multi-row copy/visual selection.
+  readonly current: boolean;
+  // The fill behind a non-current match (amber for a filter/standalone search,
+  // accent when a search runs inside a filter).
   readonly matchBg: string;
-  readonly currentMatchBg: string;
 }) => {
   const needle = query.trim();
   if (!needle) return <span fg={fallbackColor}>{text}</span>;
@@ -127,8 +128,17 @@ const HighlightedText = ({
         </span>,
       );
     }
+    // The current search hit is inverse video of the cursor row (which is
+    // already painted with selectedBg): selectedText fill, selectedBg glyphs.
+    // That always contrasts — on dark-selection themes it reproduces the
+    // design's bright --fg block; on light/inverted-selection themes (e.g. the
+    // default) it stays a distinct dark block instead of vanishing into the row.
     spans.push(
-      <span key={`hit-${matchIndex}`} fg={colors.screenBg} bg={selected ? currentMatchBg : matchBg}>
+      <span
+        key={`hit-${matchIndex}`}
+        fg={current ? colors.selectedBg : colors.screenBg}
+        bg={current ? colors.selectedText : matchBg}
+      >
         {text.slice(matchIndex, matchIndex + needle.length)}
       </span>,
     );
@@ -150,8 +160,8 @@ export const LogRows = ({
   width,
   height,
   scrollbar,
+  scrollbarActive,
   focused,
-  nameWidth,
   selectedLogId,
   selectedLogLineIndex,
   selectedLogIds,
@@ -165,8 +175,10 @@ export const LogRows = ({
   readonly width: number;
   readonly height: number;
   readonly scrollbar: ScrollbarModel | null;
+  // The thumb brightens to the accent only when scrolled back (follow paused);
+  // while tailing it stays dim, matching the design's `.t-scroll-thumb.active`.
+  readonly scrollbarActive: boolean;
   readonly focused: boolean;
-  readonly nameWidth: number;
   readonly selectedLogId: number | null;
   readonly selectedLogLineIndex: number;
   readonly selectedLogIds: ReadonlySet<number>;
@@ -178,25 +190,24 @@ export const LogRows = ({
 }) => {
   // Filter matches read amber. Search hits read amber too when search stands
   // alone, but switch to the accent so they stay distinct from the amber filter
-  // when a search runs inside a filter. The current hit (on the cursor row) is
-  // always the accent — that's the match `n` / `N` move between.
+  // when a search runs inside a filter. The current hit (the one `n` / `N` move
+  // between) is the inverse-video block rendered in HighlightedText.
   const matchBg = searchActive && filterActive ? colors.accent : colors.yellow;
-  const currentMatchBg = searchActive ? colors.accent : colors.yellow;
   const visibleRows = rows.slice(0, Math.max(0, height));
   const hasScrollbar = scrollbar !== null;
   const logPaneWidth = hasScrollbar ? Math.max(1, width - 1) : width;
   const scrollbarChars = Array.from({ length: Math.max(0, height) }, (_, index) => {
     if (!scrollbar) return "";
     return index >= scrollbar.thumbTop && index < scrollbar.thumbTop + scrollbar.thumbHeight
-      ? "#"
-      : "|";
+      ? "█"
+      : "│";
   });
 
   return (
     <box flexDirection="column" width={width} height={height} onMouseScroll={onScroll}>
       {Array.from({ length: Math.max(0, height) }, (_, index) => {
         const row = visibleRows[index];
-        const scrollbarChar = scrollbarChars[index] ?? "|";
+        const scrollbarChar = scrollbarChars[index] ?? "│";
 
         if (!row) {
           return (
@@ -219,7 +230,7 @@ export const LogRows = ({
 
         const log = row.log;
         const continuation = row.lineIndex !== 0;
-        const textWidth = Math.max(1, logPaneWidth - logMetaWidth(nameWidth) - 2);
+        const textWidth = Math.max(1, logPaneWidth - logMetaWidth - 2);
         const cursor =
           focused &&
           ((selectedLogId === log.id && selectedLogLineIndex === row.lineIndex) ||
@@ -260,9 +271,9 @@ export const LogRows = ({
               <text wrapMode="none" truncate>
                 <LogMeta
                   log={log}
-                  nameWidth={nameWidth}
                   continuation={continuation}
                   dividerStyle={dividerStyle}
+                  highlighted={highlighted}
                 />
                 {highlightQuery.trim()
                   ? segments.map((segment, segmentIndex) => (
@@ -271,9 +282,8 @@ export const LogRows = ({
                         text={segment.text}
                         query={highlightQuery}
                         fallbackColor={color}
-                        selected={highlighted}
+                        current={cursor && searchActive}
                         matchBg={matchBg}
-                        currentMatchBg={currentMatchBg}
                       />
                     ))
                   : segments.map((segment, segmentIndex) => (
@@ -292,7 +302,16 @@ export const LogRows = ({
               </text>
             </box>
             {hasScrollbar ? (
-              <text fg={scrollbarChar === "#" ? colors.accent : colors.dim} wrapMode="none">
+              <text
+                fg={
+                  scrollbarChar === "█"
+                    ? scrollbarActive
+                      ? colors.accent
+                      : colors.dim
+                    : colors.separator
+                }
+                wrapMode="none"
+              >
                 {scrollbarChar}
               </text>
             ) : null}

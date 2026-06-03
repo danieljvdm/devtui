@@ -18,7 +18,6 @@ export const AppView = ({
   layout,
   view,
   uiState,
-  nameColWidth,
   copyFlash,
   copyNotice,
   quitArmed,
@@ -32,7 +31,6 @@ export const AppView = ({
   readonly layout: LayoutModel;
   readonly view: ViewModel;
   readonly uiState: UiState;
-  readonly nameColWidth: number;
   readonly copyFlash: CopyFlash | null;
   readonly copyNotice: string | null;
   readonly quitArmed: boolean;
@@ -84,8 +82,8 @@ export const AppView = ({
                 width={logPaneWidth}
                 height={view.logPaneHeight}
                 scrollbar={view.scrollbar}
+                scrollbarActive={!view.isFollowing}
                 focused={view.focusedPane === "logs"}
-                nameWidth={nameColWidth}
                 selectedLogId={uiState.selectedLogId}
                 selectedLogLineIndex={uiState.selectedLogLineIndex}
                 selectedLogIds={view.selectedLogIds}
@@ -108,7 +106,7 @@ export const AppView = ({
                 width={width}
                 showHelp
               />
-              <Divider width={width} />
+              <Divider width={width} solid />
             </>
           ) : null}
           {uiState.processPickerOpen ? (
@@ -124,8 +122,8 @@ export const AppView = ({
               width={width}
               height={view.logPaneHeight}
               scrollbar={view.scrollbar}
+              scrollbarActive={!view.isFollowing}
               focused={view.focusedPane === "logs"}
-              nameWidth={nameColWidth}
               selectedLogId={uiState.selectedLogId}
               selectedLogLineIndex={uiState.selectedLogLineIndex}
               selectedLogIds={view.selectedLogIds}
@@ -157,16 +155,13 @@ export const AppView = ({
       <StatusBar
         width={width}
         view={view}
-        themeName={uiState.themeName}
         activeProcess={activeProcess}
         crashed={crashed}
         logLevel={uiState.logLevel}
         quitArmed={quitArmed}
         copyNotice={copyNotice}
       />
-      {uiState.helpOpen ? (
-        <HelpOverlay width={width} height={height} processCount={snapshot.processes.length} />
-      ) : null}
+      {uiState.helpOpen ? <HelpOverlay width={width} height={height} /> : null}
       {uiState.themePickerOpen ? (
         <ThemeSelectorOverlay
           width={width}
